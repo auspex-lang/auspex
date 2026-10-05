@@ -4,13 +4,13 @@
 #include <string.h>
 #include <unistd.h>
 
-static int run_mypl(const char* source, char* out, size_t out_size) {
-    FILE* f = fopen("/tmp/test_phase9_src.mypl", "w");
+static int run_auspex(const char* source, char* out, size_t out_size) {
+    FILE* f = fopen("/tmp/test_phase9_src.apx", "w");
     if (f == NULL) return -1;
     fprintf(f, "%s", source);
     fclose(f);
 
-    int rc = system("./bin/mypl /tmp/test_phase9_src.mypl > /tmp/test_phase9_out.txt 2>&1");
+    int rc = system("./bin/auspex /tmp/test_phase9_src.apx > /tmp/test_phase9_out.txt 2>&1");
 
     FILE* outf = fopen("/tmp/test_phase9_out.txt", "r");
     if (outf != NULL) {
@@ -28,7 +28,7 @@ static int output_contains(const char* out, const char* substr) {
 
 TEST(phase9_dbms_output_buffer_and_get_lines) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    dbms_output.enable(10);\n"
         "    dbms_output.put_line(\"hello\");\n"
@@ -44,7 +44,7 @@ TEST(phase9_dbms_output_buffer_and_get_lines) {
 
 TEST(phase9_dbms_output_disabled_put_is_noop) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    dbms_output.put_line(\"ignored\");\n"
         "    array<string> lines = dbms_output.get_lines();\n"
@@ -61,7 +61,7 @@ TEST(phase9_utl_file_write_and_read) {
     if (f != NULL) fclose(f);
 
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    int h = utl_file.fopen(\"/tmp/test_phase9_file.txt\", \"w\");\n"
         "    utl_file.put_line(h, \"hello\");\n"
@@ -84,9 +84,9 @@ TEST(phase9_utl_file_write_and_read) {
 }
 
 TEST(phase9_dbms_sql_execute_and_query) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    dbms_sql.execute(\"CREATE TABLE phase9_t (id int, name string)\");\n"
         "    dbms_sql.execute(\"INSERT INTO phase9_t VALUES (1, 'alice')\");\n"
@@ -102,7 +102,7 @@ TEST(phase9_dbms_sql_execute_and_query) {
 
 TEST(phase9_regexp_like) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    if regexp_like(\"hello123\", \"[0-9]+\") { print \"match\"; }\n"
         "    if regexp_like(\"hello\", \"^[a-z]+$\") { print \"lower\"; }\n"
@@ -118,7 +118,7 @@ TEST(phase9_regexp_like) {
 
 TEST(phase9_regexp_replace) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    print regexp_replace(\"a1b22c333\", \"[0-9]+\", \"#\");\n"
         "    return 0;\n"
@@ -130,7 +130,7 @@ TEST(phase9_regexp_replace) {
 
 TEST(phase9_regexp_substr) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    print regexp_substr(\"abc123def\", \"[0-9]+\");\n"
         "    return 0;\n"
@@ -142,7 +142,7 @@ TEST(phase9_regexp_substr) {
 
 TEST(phase9_sequence_nextval_and_currval) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create_sequence(\"order_seq\", 10, 5);\n"
         "    print int_to_string(nextval(\"order_seq\"));\n"
@@ -158,7 +158,7 @@ TEST(phase9_sequence_nextval_and_currval) {
 
 TEST(phase9_sequence_drop_and_undefined) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create_sequence(\"tmp_seq\", 1, 1);\n"
         "    nextval(\"tmp_seq\");\n"

@@ -1,5 +1,5 @@
 // Phase 1 demo: exception handling, SQL DML feedback, and dynamic SQL.
-// Run with: ./bin/mypl examples/phase1.mypl --db :memory:
+// Run with: ./bin/auspex examples/phase1.apx --db :memory:
 // smoke: requires sqlite
 // smoke: args --db :memory:
 

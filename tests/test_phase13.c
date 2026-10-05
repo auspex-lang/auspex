@@ -14,13 +14,13 @@
  * green.
  * ========================================================================== */
 
-static int run_mypl(const char* source, char* out, size_t out_size) {
-    FILE* f = fopen("/tmp/test_phase13_src.mypl", "w");
+static int run_auspex(const char* source, char* out, size_t out_size) {
+    FILE* f = fopen("/tmp/test_phase13_src.apx", "w");
     if (f == NULL) return -1;
     fprintf(f, "%s", source);
     fclose(f);
 
-    int rc = system("./bin/mypl /tmp/test_phase13_src.mypl > /tmp/test_phase13_out.txt 2>&1");
+    int rc = system("./bin/auspex /tmp/test_phase13_src.apx > /tmp/test_phase13_out.txt 2>&1");
 
     FILE* outf = fopen("/tmp/test_phase13_out.txt", "r");
     if (outf != NULL) {
@@ -46,23 +46,23 @@ static int read_file_to(const char* path, char* buf, size_t size) {
 }
 
 static void clean_default_db(void) {
-    remove("mypl.db");
-    remove("mypl.db.packages");
-    remove("mypl.db.programs");
+    remove("auspex.db");
+    remove("auspex.db.packages");
+    remove("auspex.db.programs");
 }
 
 /* ===== Issue #34: Makefile install target and man page =====
  *
  * The Makefile has no install/uninstall targets today
  * ("make: *** No rule to make target 'install'.  Stop.", exit 2). Acceptance:
- *   - `make install PREFIX=<dir>` installs bin/mypl and a man page at
- *     share/man/man1/mypl.1 (conventional PREFIX layout),
- *   - the installed binary runs standalone (`--version` prints "MyPL"),
+ *   - `make install PREFIX=<dir>` installs bin/auspex and a man page at
+ *     share/man/man1/auspex.1 (conventional PREFIX layout),
+ *   - the installed binary runs standalone (`--version` prints "Auspex"),
  *   - `make uninstall PREFIX=<dir>` removes both again. */
 
-#define PHASE13_PREFIX "/tmp/mypl_phase13_install"
-#define PHASE13_BIN PHASE13_PREFIX "/bin/mypl"
-#define PHASE13_MAN PHASE13_PREFIX "/share/man/man1/mypl.1"
+#define PHASE13_PREFIX "/tmp/auspex_phase13_install"
+#define PHASE13_BIN PHASE13_PREFIX "/bin/auspex"
+#define PHASE13_MAN PHASE13_PREFIX "/share/man/man1/auspex.1"
 
 TEST(phase13_issue34_make_install_target) {
     char out[256];
@@ -77,7 +77,7 @@ TEST(phase13_issue34_make_install_target) {
     rc = system(PHASE13_BIN " --version > /tmp/test_phase13_ver.log 2>&1");
     ASSERT_INT_EQ(0, WEXITSTATUS(rc));
     ASSERT_INT_EQ(1, read_file_to("/tmp/test_phase13_ver.log", out, sizeof(out)) > 0);
-    ASSERT_INT_EQ(1, output_contains(out, "MyPL"));
+    ASSERT_INT_EQ(1, output_contains(out, "Auspex"));
 
     /* Man page at the conventional PREFIX/share/man/man1 location. */
     ASSERT_INT_EQ(0, access(PHASE13_MAN, R_OK));
@@ -173,7 +173,7 @@ TEST(phase13_issue36_locals_beyond_fixed_limit) {
     snprintf(src + off, cap - off, "    print total;\n    return 0;\n}\n");
 
     char out[256];
-    int rc = run_mypl(src, out, sizeof(out));
+    int rc = run_auspex(src, out, sizeof(out));
     free(src);
     ASSERT_INT_EQ(0, rc);
     ASSERT_INT_EQ(1, output_contains(out, "44850"));
@@ -184,7 +184,7 @@ TEST(phase13_issue36_recursion_beyond_fixed_stack) {
     /* Bounded recursion to depth 1000 (> STACK_MAX = 256 frames).
        Expected accumulator: 1000 + 999 + ... + 1 = 500500. */
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "func countdown(n int, acc int) -> int {\n"
         "    if n == 0 {\n"
         "        return acc;\n"
@@ -248,13 +248,13 @@ TEST(phase13_issue37_repl_accumulation_guard) {
     fprintf(f, "%s\n", ".exit");
     fclose(f);
 
-    int rc = system("./bin/mypl < /tmp/test_phase13_repl_in.txt"
+    int rc = system("./bin/auspex < /tmp/test_phase13_repl_in.txt"
                     " > /tmp/test_phase13_repl_out.txt 2>&1");
     ASSERT_INT_EQ(0, WEXITSTATUS(rc));
 
     char out[16384];
     ASSERT_INT_EQ(1, read_file_to("/tmp/test_phase13_repl_out.txt", out, sizeof(out)) > 0);
-    ASSERT_INT_EQ(1, output_contains(out, "MyPL REPL"));
+    ASSERT_INT_EQ(1, output_contains(out, "Auspex REPL"));
 
     /* Each input's marker output must appear, in input order (the REPL
        re-runs the accumulated main body on every input, so markers repeat;
@@ -282,7 +282,7 @@ TEST(phase13_issue37_repl_accumulation_guard) {
 
 /* ===== Issue #38: cycle-safe collection =====
  *
- * MyPL reference-counts arrays/maps/rows, so unreachable reference cycles
+ * Auspex reference-counts arrays/maps/rows, so unreachable reference cycles
  * leak today. Cycles ARE expressible via the `any` type: a
  * map<string, any> can hold itself and an array<map<string, any>> that
  * holds the map.
@@ -308,7 +308,7 @@ TEST(phase13_issue37_repl_accumulation_guard) {
 TEST(phase13_issue38_cycles_expressible_and_complete) {
     clean_default_db();
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    map<string, any> m;\n"
         "    m[\"x\"] = 7;\n"
@@ -328,7 +328,7 @@ TEST(phase13_issue38_cycles_expressible_and_complete) {
 TEST(phase13_issue38_cycle_churn_completes) {
     clean_default_db();
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    int i = 0;\n"
         "    while i < 2000 {\n"

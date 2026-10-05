@@ -1,12 +1,12 @@
 # The two SQL engines
 
-MyPL speaks one dialect of embedded SQL but can run it on two very different
+Auspex speaks one dialect of embedded SQL but can run it on two very different
 backends. You pick per invocation — there is no shared storage format between
 them.
 
 ## SQLite backend (`--db <path>`, `.connect`)
 
-The full-featured option. MyPL embeds the SQL text and hands it to SQLite,
+The full-featured option. Auspex embeds the SQL text and hands it to SQLite,
 so anything SQLite can express (JOINs, subqueries, window functions, …) works,
 with `?var` bind parameters substituted safely. `:memory:` is accepted for
 scratch work. In the REPL, `.connect <path>` switches sessions.
@@ -16,15 +16,18 @@ scratch work. In the REPL, `.connect <path>` switches sessions.
   statement rather than the exact pre-write image.
 - `?var` parameters in the WHERE clause of a row-triggered UPDATE/DELETE are
   rejected with a clear runtime error.
-- Package sources persist in `_mypl_packages`, triggers/procs in
-  `_mypl_program_units`, sequences in `_mypl_sequences`.
+- Package sources persist in `_auspex_packages`, triggers/procs in
+  `_auspex_program_units`, sequences in `_auspex_sequences`. A database
+  written by MyPL (tables named `_mypl_*`) has its tables renamed the first
+  time Auspex opens it.
 
 ## Custom SQL engine (the default, no SQLite needed)
 
 A small engine built into the binary: a file-backed catalog page plus row
 pages, secondary indexes as page-based B+ trees, and a growing catalog format
 (currently V5) that also stores constraints, views, and sequences. Without
-`--db`, the CLI opens `mypl.db` in the working directory.
+`--db`, the CLI opens `auspex.db` in the working directory (or a MyPL-era
+`mypl.db`, with a warning, if only that one exists).
 
 Supported:
 
@@ -61,4 +64,5 @@ Known limitations (deliberate, documented):
 - Aggregates and GROUP BY are limited compared to SQLite.
 - Column types are `int`, `float`, `string`, `bool`, `date`, `timestamp`.
 
-Set `MYPL_INDEX_DEBUG=1` to trace index-assisted lookups on stderr.
+Set `AUSPEX_INDEX_DEBUG=1` (MyPL's `MYPL_INDEX_DEBUG` still works) to trace
+index-assisted lookups on stderr.

@@ -2,17 +2,17 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int run_mypl(const char* source, const char* args, char* out, size_t out_size) {
-    FILE* f = fopen("/tmp/test_phase1_src.mypl", "w");
+static int run_auspex(const char* source, const char* args, char* out, size_t out_size) {
+    FILE* f = fopen("/tmp/test_phase1_src.apx", "w");
     if (f == NULL) return -1;
     fprintf(f, "%s", source);
     fclose(f);
 
     char cmd[1024];
     if (args != NULL) {
-        snprintf(cmd, sizeof(cmd), "./bin/mypl /tmp/test_phase1_src.mypl %s > /tmp/test_phase1_out.txt 2>&1", args);
+        snprintf(cmd, sizeof(cmd), "./bin/auspex /tmp/test_phase1_src.apx %s > /tmp/test_phase1_out.txt 2>&1", args);
     } else {
-        snprintf(cmd, sizeof(cmd), "./bin/mypl /tmp/test_phase1_src.mypl > /tmp/test_phase1_out.txt 2>&1");
+        snprintf(cmd, sizeof(cmd), "./bin/auspex /tmp/test_phase1_src.apx > /tmp/test_phase1_out.txt 2>&1");
     }
     int rc = system(cmd);
 
@@ -28,7 +28,7 @@ static int run_mypl(const char* source, const char* args, char* out, size_t out_
 
 TEST(phase1_exception_catch_variable_holds_message) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    try {\n"
         "        assert(false, \"boom\");\n"
@@ -45,7 +45,7 @@ TEST(phase1_exception_catch_variable_holds_message) {
 
 TEST(phase1_exception_try_block_without_error_runs_normally) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    try {\n"
         "        int x = 7;\n"
@@ -61,7 +61,7 @@ TEST(phase1_exception_try_block_without_error_runs_normally) {
 
 TEST(phase1_exception_preserves_locals_outside_try) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    int before = 5;\n"
         "    try {\n"
@@ -78,7 +78,7 @@ TEST(phase1_exception_preserves_locals_outside_try) {
 
 TEST(phase1_sql_rowcount_after_insert) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table t (id int);\n"
         "    insert into t values (1), (2), (3);\n"
@@ -92,7 +92,7 @@ TEST(phase1_sql_rowcount_after_insert) {
 
 TEST(phase1_sql_found_and_notfound) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table t (id int);\n"
         "    insert into t values (1);\n"
@@ -110,7 +110,7 @@ TEST(phase1_sql_found_and_notfound) {
 
 TEST(phase1_dynamic_sql_execute_immediate) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    execute_immediate(\"create table dyn (id int)\");\n"
         "    int n = execute_immediate(\"insert into dyn values (10), (20)\");\n"
@@ -125,7 +125,7 @@ TEST(phase1_dynamic_sql_execute_immediate) {
 
 TEST(phase1_dynamic_sql_and_exception_together) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    try {\n"
         "        execute_immediate(\"insert into missing values (1)\");\n"

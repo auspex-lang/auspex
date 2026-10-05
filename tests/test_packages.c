@@ -5,13 +5,13 @@
 
 #include "packages.h"
 
-static int run_mypl(const char* source, char* out, size_t out_size) {
-    FILE* f = fopen("/tmp/test_packages_src.mypl", "w");
+static int run_auspex(const char* source, char* out, size_t out_size) {
+    FILE* f = fopen("/tmp/test_packages_src.apx", "w");
     if (f == NULL) return -1;
     fprintf(f, "%s", source);
     fclose(f);
 
-    int rc = system("./bin/mypl /tmp/test_packages_src.mypl > /tmp/test_packages_out.txt 2>&1");
+    int rc = system("./bin/auspex /tmp/test_packages_src.apx > /tmp/test_packages_out.txt 2>&1");
 
     FILE* outf = fopen("/tmp/test_packages_out.txt", "r");
     if (outf != NULL) {
@@ -28,9 +28,9 @@ static int output_contains(const char* out, const char* substr) {
 }
 
 static void clean_db(void) {
-    remove("mypl.db");
-    remove("mypl.db.packages");
-    remove("mypl.db.programs");
+    remove("auspex.db");
+    remove("auspex.db.packages");
+    remove("auspex.db.programs");
 }
 
 /* --- packages_filter_redefined --- */
@@ -81,13 +81,13 @@ TEST(packages_filter_ignores_comments_and_strings) {
 
 TEST(packages_filter_keeps_text_outside_removed_blocks) {
     const char* loaded =
-        "// __MYPL_PACKAGE_SOURCE__\n"
+        "// __AUSPEX_PACKAGE_SOURCE__\n"
         "package a is\n    proc f() -> int;\nend a;\n"
         "package body a is\n    proc f() -> int { return 1; }\nend a;\n"
         "package b is\n    proc g() -> int;\nend b;\n";
     char* filtered = packages_filter_redefined(loaded, "package body a is\nend a;\n");
     ASSERT_PTR_NOT_NULL(filtered);
-    ASSERT_PTR_NOT_NULL(strstr(filtered, "// __MYPL_PACKAGE_SOURCE__"));
+    ASSERT_PTR_NOT_NULL(strstr(filtered, "// __AUSPEX_PACKAGE_SOURCE__"));
     ASSERT_PTR_NULL(strstr(filtered, "package a is"));
     ASSERT_PTR_NULL(strstr(filtered, "package body a is"));
     ASSERT_PTR_NOT_NULL(strstr(filtered, "package b is\n    proc g() -> int;\nend b;"));
@@ -107,7 +107,7 @@ TEST(packages_filter_everything_removed_returns_null) {
 TEST(packages_user_package_overrides_builtin_dbms_sql) {
     clean_db();
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "package dbms_sql is\n"
         "    proc execute(sql string) -> int;\n"
         "end dbms_sql;\n"
@@ -143,9 +143,9 @@ TEST(packages_rerunning_package_declaration_with_same_db) {
         "end greet;\n"
         "proc main() -> int { greet.hello(); return 0; }\n";
     char out[512];
-    ASSERT_INT_EQ(0, run_mypl(source, out, sizeof(out)));
+    ASSERT_INT_EQ(0, run_auspex(source, out, sizeof(out)));
     /* The persisted copy from the first run must not clash with the file. */
-    ASSERT_INT_EQ(0, run_mypl(source, out, sizeof(out)));
+    ASSERT_INT_EQ(0, run_auspex(source, out, sizeof(out)));
     ASSERT_INT_EQ(1, output_contains(out, "hello"));
     clean_db();
 }
@@ -153,7 +153,7 @@ TEST(packages_rerunning_package_declaration_with_same_db) {
 TEST(packages_persisted_override_replaces_builtin_in_later_runs) {
     clean_db();
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "package dbms_output is\n"
         "    proc put_line(s string) -> int;\n"
         "end dbms_output;\n"
@@ -166,7 +166,7 @@ TEST(packages_persisted_override_replaces_builtin_in_later_runs) {
 
     /* New program without the declaration: the stored package is used and
        does not collide with the built-in one. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int { dbms_output.put_line(\"later\"); return 0; }\n",
         out, sizeof(out));
     ASSERT_INT_EQ(0, rc);
@@ -177,7 +177,7 @@ TEST(packages_persisted_override_replaces_builtin_in_later_runs) {
 TEST(packages_override_excluded_by_conditional_compilation_keeps_builtin) {
     clean_db();
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "$if CUSTOM_OUTPUT $then\n"
         "package dbms_output is\n"
         "    proc put_line(s string) -> int;\n"

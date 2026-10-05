@@ -12,8 +12,8 @@ message or output. -->
 
 ## Minimal reproducer
 
-<!-- A small .mypl file or sequence of commands that triggers it. Which
-backend? Custom engine (default mypl.db) or SQLite (--db / .connect)? -->
+<!-- A small .apx file or sequence of commands that triggers it. Which
+backend? Custom engine (default auspex.db) or SQLite (--db / .connect)? -->
 
 ## Environment
 

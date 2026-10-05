@@ -12,9 +12,9 @@
 TEST(parser_error_includes_location) {
     char error[256];
     Program* program = parse_with_path(
-        "proc main() -> int { return 1; ", "parser.mypl", error, sizeof(error));
+        "proc main() -> int { return 1; ", "parser.apx", error, sizeof(error));
     ASSERT_PTR_NULL(program);
-    ASSERT_PTR_NOT_NULL(strstr(error, "parser.mypl:1:"));
+    ASSERT_PTR_NOT_NULL(strstr(error, "parser.apx:1:"));
     ASSERT_PTR_NOT_NULL(strstr(error, ": error:"));
 }
 
@@ -27,9 +27,9 @@ TEST(type_error_includes_location) {
         "    int x = \"hello\";\n"
         "    return 0;\n"
         "}",
-        &chunk, "typecheck.mypl", error, sizeof(error));
+        &chunk, "typecheck.apx", error, sizeof(error));
     ASSERT_INT_EQ(0, ok);
-    ASSERT_PTR_NOT_NULL(strstr(error, "typecheck.mypl:2:"));
+    ASSERT_PTR_NOT_NULL(strstr(error, "typecheck.apx:2:"));
     ASSERT_PTR_NOT_NULL(strstr(error, ": error:"));
     ASSERT_PTR_NOT_NULL(strstr(error, "string"));
     free_chunk(&chunk);
@@ -43,9 +43,9 @@ TEST(compiler_error_includes_location) {
         "proc main() -> int {\n"
         "    return undefined_var;\n"
         "}",
-        &chunk, "compiler.mypl", error, sizeof(error));
+        &chunk, "compiler.apx", error, sizeof(error));
     ASSERT_INT_EQ(0, ok);
-    ASSERT_PTR_NOT_NULL(strstr(error, "compiler.mypl:2:"));
+    ASSERT_PTR_NOT_NULL(strstr(error, "compiler.apx:2:"));
     ASSERT_PTR_NOT_NULL(strstr(error, ": error:"));
     ASSERT_PTR_NOT_NULL(strstr(error, "Undefined variable"));
     free_chunk(&chunk);
@@ -61,14 +61,14 @@ TEST(runtime_error_includes_location) {
         "    assert(x == 1, \"failed\");\n"
         "    return 0;\n"
         "}",
-        &chunk, "runtime.mypl", error, sizeof(error));
+        &chunk, "runtime.apx", error, sizeof(error));
     ASSERT_INT_EQ(1, ok);
 
     VM* vm = vm_init();
     ASSERT_INT_EQ(INTERPRET_RUNTIME_ERROR, vm_interpret(vm, &chunk));
     const char* msg = vm_get_error(vm);
     ASSERT_PTR_NOT_NULL(msg);
-    ASSERT_PTR_NOT_NULL(strstr(msg, "runtime.mypl:3:"));
+    ASSERT_PTR_NOT_NULL(strstr(msg, "runtime.apx:3:"));
     ASSERT_PTR_NOT_NULL(strstr(msg, ": error:"));
     ASSERT_PTR_NOT_NULL(strstr(msg, "failed"));
     vm_free(vm);
@@ -84,14 +84,14 @@ TEST(native_error_includes_location) {
         "    int x = parse_int(\"not a number\");\n"
         "    return x;\n"
         "}",
-        &chunk, "native.mypl", error, sizeof(error));
+        &chunk, "native.apx", error, sizeof(error));
     ASSERT_INT_EQ(1, ok);
 
     VM* vm = vm_init();
     ASSERT_INT_EQ(INTERPRET_RUNTIME_ERROR, vm_interpret(vm, &chunk));
     const char* msg = vm_get_error(vm);
     ASSERT_PTR_NOT_NULL(msg);
-    ASSERT_PTR_NOT_NULL(strstr(msg, "native.mypl:2:"));
+    ASSERT_PTR_NOT_NULL(strstr(msg, "native.apx:2:"));
     ASSERT_PTR_NOT_NULL(strstr(msg, ": error:"));
     ASSERT_PTR_NOT_NULL(strstr(msg, "parse_int: invalid integer"));
     vm_free(vm);
@@ -128,9 +128,9 @@ TEST(compile_error_line_is_relative_to_user_source_after_preamble) {
         "    int x = \"hello\";\n"
         "    return 0;\n"
         "}",
-        "user.mypl", &chunk, error, sizeof(error));
+        "user.apx", &chunk, error, sizeof(error));
     ASSERT_INT_EQ(0, ok);
-    ASSERT_PTR_NOT_NULL(strstr(error, "user.mypl:2:"));
+    ASSERT_PTR_NOT_NULL(strstr(error, "user.apx:2:"));
     free_chunk(&chunk);
 }
 
@@ -141,9 +141,9 @@ TEST(compile_error_in_preamble_is_attributed_to_prepended_declarations) {
     int ok = compile_after_preamble(
         "proc bad() -> int { int y = \"s\"; return 0; }\n\n", 2,
         "proc main() -> int { return 0; }",
-        "user.mypl", &chunk, error, sizeof(error));
+        "user.apx", &chunk, error, sizeof(error));
     ASSERT_INT_EQ(0, ok);
-    ASSERT_PTR_NOT_NULL(strstr(error, "user.mypl: error: in built-in or stored declarations"));
+    ASSERT_PTR_NOT_NULL(strstr(error, "user.apx: error: in built-in or stored declarations"));
     free_chunk(&chunk);
 }
 
@@ -158,14 +158,14 @@ TEST(runtime_error_line_is_relative_to_user_source_after_preamble) {
         "    assert(x == 1, \"failed\");\n"
         "    return 0;\n"
         "}",
-        "user.mypl", &chunk, error, sizeof(error));
+        "user.apx", &chunk, error, sizeof(error));
     ASSERT_INT_EQ(1, ok);
 
     VM* vm = vm_init();
     ASSERT_INT_EQ(INTERPRET_RUNTIME_ERROR, vm_interpret(vm, &chunk));
     const char* msg = vm_get_error(vm);
     ASSERT_PTR_NOT_NULL(msg);
-    ASSERT_PTR_NOT_NULL(strstr(msg, "user.mypl:3:"));
+    ASSERT_PTR_NOT_NULL(strstr(msg, "user.apx:3:"));
     vm_free(vm);
     free_chunk(&chunk);
 }
@@ -183,14 +183,14 @@ TEST(runtime_error_inside_prepended_code_is_reported_at_the_call_site) {
         "    int x = wrapper(\"nope\");\n"
         "    return x;\n"
         "}",
-        "user.mypl", &chunk, error, sizeof(error));
+        "user.apx", &chunk, error, sizeof(error));
     ASSERT_INT_EQ(1, ok);
 
     VM* vm = vm_init();
     ASSERT_INT_EQ(INTERPRET_RUNTIME_ERROR, vm_interpret(vm, &chunk));
     const char* msg = vm_get_error(vm);
     ASSERT_PTR_NOT_NULL(msg);
-    ASSERT_PTR_NOT_NULL(strstr(msg, "user.mypl:2:"));
+    ASSERT_PTR_NOT_NULL(strstr(msg, "user.apx:2:"));
     ASSERT_PTR_NOT_NULL(strstr(msg, "parse_int: invalid integer"));
     vm_free(vm);
     free_chunk(&chunk);
@@ -208,7 +208,7 @@ TEST(multiline_select_error_is_reported_at_the_statement_start) {
         "        where id = 1;\n"
         "    return n;\n"
         "}",
-        &chunk, "select.mypl", error, sizeof(error));
+        &chunk, "select.apx", error, sizeof(error));
     ASSERT_INT_EQ(1, ok);
 
     /* No database is attached, so the query fails where it is issued. */
@@ -216,13 +216,13 @@ TEST(multiline_select_error_is_reported_at_the_statement_start) {
     ASSERT_INT_EQ(INTERPRET_RUNTIME_ERROR, vm_interpret(vm, &chunk));
     const char* msg = vm_get_error(vm);
     ASSERT_PTR_NOT_NULL(msg);
-    ASSERT_PTR_NOT_NULL(strstr(msg, "select.mypl:3:"));
+    ASSERT_PTR_NOT_NULL(strstr(msg, "select.apx:3:"));
     vm_free(vm);
     free_chunk(&chunk);
 }
 
 TEST(imported_module_is_numbered_from_its_own_first_line) {
-    const char* module_path = "/tmp/mypl_test_errors_import_mod.mypl";
+    const char* module_path = "/tmp/auspex_test_errors_import_mod.apx";
     FILE* f = fopen(module_path, "w");
     ASSERT_PTR_NOT_NULL(f);
     fprintf(f, "// line 1\nproc broken() -> int { int y = \"s\"; return 0; }\n");
@@ -235,11 +235,11 @@ TEST(imported_module_is_numbered_from_its_own_first_line) {
     init_chunk(&chunk);
     char error[256];
     /* The main source has a 3-line preamble; the module must not inherit it. */
-    int ok = compile_after_preamble("// a\n// b\n\n", 3, user, "user.mypl",
+    int ok = compile_after_preamble("// a\n// b\n\n", 3, user, "user.apx",
                                     &chunk, error, sizeof(error));
     remove(module_path);
     ASSERT_INT_EQ(0, ok);
-    ASSERT_PTR_NOT_NULL(strstr(error, "mypl_test_errors_import_mod.mypl:2:"));
+    ASSERT_PTR_NOT_NULL(strstr(error, "auspex_test_errors_import_mod.apx:2:"));
     free_chunk(&chunk);
 }
 
@@ -250,16 +250,16 @@ TEST(conditional_compilation_error_line_is_relative_to_user_source) {
     int ok = compile_after_preamble(
         "// a\n// b\n\n", 3,
         "$end\nproc main() -> int { return 0; }",
-        "user.mypl", &chunk, error, sizeof(error));
+        "user.apx", &chunk, error, sizeof(error));
     ASSERT_INT_EQ(0, ok);
-    ASSERT_PTR_NOT_NULL(strstr(error, "user.mypl:1:"));
+    ASSERT_PTR_NOT_NULL(strstr(error, "user.apx:1:"));
     free_chunk(&chunk);
 }
 
 TEST(error_format_for_negative_line_names_prepended_declarations) {
     char buf[256];
-    format_error(buf, sizeof(buf), "user.mypl", -7, 3, "boom");
-    ASSERT_PTR_NOT_NULL(strstr(buf, "user.mypl: error: in built-in or stored declarations: boom"));
+    format_error(buf, sizeof(buf), "user.apx", -7, 3, "boom");
+    ASSERT_PTR_NOT_NULL(strstr(buf, "user.apx: error: in built-in or stored declarations: boom"));
     ASSERT_PTR_NULL(strstr(buf, "-7"));
     format_error(buf, sizeof(buf), NULL, -1, 0, "boom");
     ASSERT_PTR_NOT_NULL(strstr(buf, "in built-in or stored declarations: boom"));

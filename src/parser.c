@@ -2133,7 +2133,7 @@ static Stmt* statement(Parser* parser) {
     if (match(parser, TOKEN_RETURN)) return return_statement(parser);
     if (match(parser, TOKEN_PRINT)) return print_statement(parser);
     if (check(parser, TOKEN_DROP) && peek_next(parser).type == TOKEN_TRIGGER) {
-        /* Language-level DROP TRIGGER (not SQL DDL): removes a MyPL trigger. */
+        /* Language-level DROP TRIGGER (not SQL DDL): removes a Auspex trigger. */
         Token kw = parser->current;
         advance(parser); /* consume drop */
         advance(parser); /* consume trigger */

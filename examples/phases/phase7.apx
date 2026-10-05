@@ -1,4 +1,4 @@
-// smoke: setup phase7_setup.mypl
+// smoke: setup phase7_setup.apx
 
 proc main() -> int {
     // column %TYPE and table %ROWTYPE

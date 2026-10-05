@@ -4,13 +4,13 @@
 #include <string.h>
 #include <unistd.h>
 
-static int run_mypl(const char* source, char* out, size_t out_size) {
-    FILE* f = fopen("/tmp/test_phase10_src.mypl", "w");
+static int run_auspex(const char* source, char* out, size_t out_size) {
+    FILE* f = fopen("/tmp/test_phase10_src.apx", "w");
     if (f == NULL) return -1;
     fprintf(f, "%s", source);
     fclose(f);
 
-    int rc = system("./bin/mypl /tmp/test_phase10_src.mypl > /tmp/test_phase10_out.txt 2>&1");
+    int rc = system("./bin/auspex /tmp/test_phase10_src.apx > /tmp/test_phase10_out.txt 2>&1");
 
     FILE* outf = fopen("/tmp/test_phase10_out.txt", "r");
     if (outf != NULL) {
@@ -27,9 +27,9 @@ static int output_contains(const char* out, const char* substr) {
 }
 
 TEST(phase10_trigger_before_after_insert) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "trigger t_log after insert on t {\n"
         "    dbms_output.put_line(\"after\");\n"
         "}\n"
@@ -57,9 +57,9 @@ TEST(phase10_trigger_before_after_insert) {
 }
 
 TEST(phase10_trigger_does_not_fire_on_other_table) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "trigger t_wrong after insert on other_table {\n"
         "    dbms_output.put_line(\"wrong\");\n"
         "}\n"
@@ -78,9 +78,9 @@ TEST(phase10_trigger_does_not_fire_on_other_table) {
 }
 
 TEST(phase10_trigger_ddl_create_table) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "trigger t_ddl after create on t2 {\n"
         "    dbms_output.put_line(\"created\");\n"
         "}\n"
@@ -99,9 +99,9 @@ TEST(phase10_trigger_ddl_create_table) {
 }
 
 TEST(phase10_trigger_update_and_delete) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "trigger t_upd after update on t {\n"
         "    dbms_output.put_line(\"updated\");\n"
         "}\n"
@@ -128,7 +128,7 @@ TEST(phase10_trigger_update_and_delete) {
 
 TEST(phase10_table_function_scalar_collection) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "func numbers() -> array<int> {\n"
         "    return range(1, 5);\n"
         "}\n"
@@ -146,9 +146,9 @@ TEST(phase10_table_function_scalar_collection) {
 }
 
 TEST(phase10_table_function_row_collection) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "func all_accounts() -> array<row> {\n"
         "    array<row> rows;\n"
         "    select * into rows from accounts;\n"
@@ -173,7 +173,7 @@ TEST(phase10_table_function_row_collection) {
 
 TEST(phase10_struct_method_mutates_field) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "struct Counter {\n"
         "    value int,\n"
         "    proc inc() {\n"
@@ -197,7 +197,7 @@ TEST(phase10_struct_method_mutates_field) {
 
 TEST(phase10_struct_func_method_returns_value) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "struct Point {\n"
         "    x int,\n"
         "    y int,\n"
@@ -217,7 +217,7 @@ TEST(phase10_struct_func_method_returns_value) {
 
 TEST(phase10_struct_method_with_params) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "struct Acc {\n"
         "    balance int,\n"
         "    proc deposit(n int) {\n"
@@ -241,7 +241,7 @@ TEST(phase10_struct_method_with_params) {
 
 TEST(phase10_cc_if_defined_takes_then_branch) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "$define DEBUG\n"
         "proc main() -> int {\n"
         "$if DEBUG $then\n"
@@ -259,7 +259,7 @@ TEST(phase10_cc_if_defined_takes_then_branch) {
 
 TEST(phase10_cc_if_undefined_takes_else_branch) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "$if DEBUG $then\n"
         "    print \"debug on\";\n"
@@ -276,10 +276,10 @@ TEST(phase10_cc_if_undefined_takes_else_branch) {
 
 TEST(phase10_cc_excluded_code_is_not_parsed) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "$if DISABLED $then\n"
-        "    this is not valid mypl syntax at all +++ ;;;\n"
+        "    this is not valid auspex syntax at all +++ ;;;\n"
         "$end\n"
         "    print \"ok\";\n"
         "    return 0;\n"
@@ -291,7 +291,7 @@ TEST(phase10_cc_excluded_code_is_not_parsed) {
 
 TEST(phase10_cc_elsif_chain) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "$define B\n"
         "proc main() -> int {\n"
         "$if A $then\n"
@@ -312,7 +312,7 @@ TEST(phase10_cc_elsif_chain) {
 
 TEST(phase10_cc_unterminated_if_is_error) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "$if DEBUG $then\n"
         "    print \"x\";\n"
@@ -325,7 +325,7 @@ TEST(phase10_cc_unterminated_if_is_error) {
 static int build_test_shared_lib(void) {
     FILE* f = fopen("/tmp/test_phase10_ext.c", "w");
     if (f == NULL) return 0;
-    fprintf(f, "int mypl_double(int x) { return x * 2; }\n");
+    fprintf(f, "int auspex_double(int x) { return x * 2; }\n");
     fclose(f);
     int rc = system("cc -shared -fPIC -o /tmp/test_phase10_ext.so /tmp/test_phase10_ext.c");
     return rc == 0;
@@ -334,9 +334,9 @@ static int build_test_shared_lib(void) {
 TEST(phase10_external_call_shared_library) {
     ASSERT_INT_EQ(1, build_test_shared_lib());
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
-        "    int r = external_call(\"/tmp/test_phase10_ext.so\", \"mypl_double\", 21);\n"
+        "    int r = external_call(\"/tmp/test_phase10_ext.so\", \"auspex_double\", 21);\n"
         "    print int_to_string(r);\n"
         "    return 0;\n"
         "}\n",
@@ -347,7 +347,7 @@ TEST(phase10_external_call_shared_library) {
 
 TEST(phase10_external_call_missing_library_fails) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    external_call(\"/tmp/nonexistent_lib_xyz.so\", \"foo\", 1);\n"
         "    return 0;\n"
@@ -359,7 +359,7 @@ TEST(phase10_external_call_missing_library_fails) {
 TEST(phase10_external_call_missing_symbol_fails) {
     ASSERT_INT_EQ(1, build_test_shared_lib());
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    external_call(\"/tmp/test_phase10_ext.so\", \"no_such_symbol\", 1);\n"
         "    return 0;\n"

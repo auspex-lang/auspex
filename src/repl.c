@@ -22,7 +22,6 @@
 #include "vm.h"
 
 #define LINE_SIZE 1024
-#define DEFAULT_DB_PATH "mypl.db"
 #define REPL_HISTORY_SIZE 100
 
 typedef struct {
@@ -672,7 +671,7 @@ static void repl_session_init(ReplSession* session, const char* db_path) {
     init_chunk(&session->chunk);
     session->vm = vm_init();
     session->driver_open = 0;
-    session->ctx.db_path = DEFAULT_DB_PATH;
+    session->ctx.db_path = default_db_path();
     session->ctx.pager = NULL;
     session->compiler = NULL;
     session->pending_init_offset = -1;
@@ -1425,7 +1424,7 @@ static int cmd_connect(ReplSession* session, const char* path) {
         session->driver_open = 0;
     } else {
         catalog_close(&session->ctx);
-        session->ctx.db_path = DEFAULT_DB_PATH;
+        session->ctx.db_path = default_db_path();
         session->ctx.pager = NULL;
     }
 
@@ -1734,11 +1733,11 @@ static void cmd_history(ReplSession* session) {
 }
 
 static void print_repl_help(void) {
-    printf("MyPL REPL commands:\n");
+    printf("Auspex REPL commands:\n");
     printf("  .exit             Quit the REPL\n");
     printf("  .quit             Same as .exit\n");
     printf("  .help             Show this help message\n");
-    printf("  .load <file>      Load and run a MyPL source file\n");
+    printf("  .load <file>      Load and run an Auspex source file\n");
     printf("  .tables           List all tables in the catalog\n");
     printf("  .schema [table]   Show schema for all tables or one table\n");
     printf("  .columns <table>  List columns for a table\n");
@@ -1756,7 +1755,7 @@ void repl_run(const char* db_path) {
     ReplSession session;
     repl_session_init(&session, db_path);
 
-    printf("MyPL REPL (type '.help' for commands, '.exit' to quit)\n");
+    printf("Auspex REPL (type '.help' for commands, '.exit' to quit)\n");
 
     char line[LINE_SIZE];
     StringBuffer accumulated;

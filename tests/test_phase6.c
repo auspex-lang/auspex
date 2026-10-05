@@ -2,17 +2,17 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int run_mypl(const char* source, const char* args, char* out, size_t out_size) {
-    FILE* f = fopen("/tmp/test_phase6_src.mypl", "w");
+static int run_auspex(const char* source, const char* args, char* out, size_t out_size) {
+    FILE* f = fopen("/tmp/test_phase6_src.apx", "w");
     if (f == NULL) return -1;
     fprintf(f, "%s", source);
     fclose(f);
 
     char cmd[1024];
     if (args != NULL) {
-        snprintf(cmd, sizeof(cmd), "./bin/mypl /tmp/test_phase6_src.mypl %s > /tmp/test_phase6_out.txt 2>&1", args);
+        snprintf(cmd, sizeof(cmd), "./bin/auspex /tmp/test_phase6_src.apx %s > /tmp/test_phase6_out.txt 2>&1", args);
     } else {
-        snprintf(cmd, sizeof(cmd), "./bin/mypl /tmp/test_phase6_src.mypl > /tmp/test_phase6_out.txt 2>&1");
+        snprintf(cmd, sizeof(cmd), "./bin/auspex /tmp/test_phase6_src.apx > /tmp/test_phase6_out.txt 2>&1");
     }
     int rc = system(cmd);
 
@@ -28,7 +28,7 @@ static int run_mypl(const char* source, const char* args, char* out, size_t out_
 
 TEST(phase6_map_string_key_methods) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    map<string,int> m;\n"
         "    m[\"a\"] = 1;\n"
@@ -52,7 +52,7 @@ TEST(phase6_map_string_key_methods) {
 
 TEST(phase6_map_int_key_methods) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    map<int,string> m;\n"
         "    m[1] = \"one\";\n"
@@ -75,7 +75,7 @@ TEST(phase6_map_int_key_methods) {
 
 TEST(phase6_array_extend_and_trim) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    array<int> a;\n"
         "    a.extend(3);\n"
@@ -99,7 +99,7 @@ TEST(phase6_array_extend_and_trim) {
 
 TEST(phase6_bulk_collect_into_array_row) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table nums (id int);\n"
         "    insert into nums values (1), (2), (3);\n"
@@ -120,7 +120,7 @@ TEST(phase6_bulk_collect_into_array_row) {
 
 TEST(phase6_forall_insert_with_scalar_array) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table targets (id int);\n"
         "    array<int> ids;\n"
@@ -141,7 +141,7 @@ TEST(phase6_forall_insert_with_scalar_array) {
 
 TEST(phase6_forall_update_with_scalar_array) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table targets (id int);\n"
         "    insert into targets values (1), (2), (3);\n"
@@ -162,7 +162,7 @@ TEST(phase6_forall_update_with_scalar_array) {
 
 TEST(phase6_forall_delete_with_scalar_array) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table targets (id int);\n"
         "    insert into targets values (1), (2), (3), (4);\n"
@@ -183,9 +183,9 @@ TEST(phase6_forall_delete_with_scalar_array) {
 
 /* Static SQL with ?var placeholders on the custom engine (no --db). */
 TEST(phase6_custom_engine_binds_static_sql) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table people (id int, name string);\n"
         "    int x = 7;\n"
@@ -205,7 +205,7 @@ TEST(phase6_custom_engine_binds_static_sql) {
         "    return 0;\n"
         "}\n",
         NULL, out, sizeof(out));
-    remove("mypl.db");
+    remove("auspex.db");
     ASSERT_INT_EQ(0, rc);
     ASSERT_INT_EQ(1, strstr(out, "matching=1") != NULL);
     ASSERT_INT_EQ(1, strstr(out, "name=o'brien") != NULL);
@@ -213,9 +213,9 @@ TEST(phase6_custom_engine_binds_static_sql) {
 }
 
 TEST(phase6_custom_engine_forall_binds_scalar_array) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table targets (id int, tag string);\n"
         "    array<int> ids;\n"
@@ -233,7 +233,7 @@ TEST(phase6_custom_engine_forall_binds_scalar_array) {
         "    return 0;\n"
         "}\n",
         NULL, out, sizeof(out));
-    remove("mypl.db");
+    remove("auspex.db");
     ASSERT_INT_EQ(0, rc);
     ASSERT_INT_EQ(1, strstr(out, "rows=3") != NULL);
     ASSERT_INT_EQ(1, strstr(out, "after=0") != NULL);

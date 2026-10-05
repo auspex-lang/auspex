@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "sql_engine.h"
+#include "os.h"
 #include "ast.h"   /* TRIGGER_BEFORE/AFTER/INSERT/UPDATE/DELETE constants */
 
 /* -------------------------------------------------------------------------- */
@@ -2698,7 +2699,7 @@ static int try_index_lookup(Context* ctx, Table* table, WhereNode* where,
                 free_rows(scan.rows, scan.count);
                 return 0; /* corrupt index: full scan is still correct */
             }
-            if (getenv("MYPL_INDEX_DEBUG") != NULL) {
+            if (getenv("AUSPEX_INDEX_DEBUG") != NULL || getenv("MYPL_INDEX_DEBUG") != NULL) {
                 fprintf(stderr, "index lookup on %s(%s): %d candidates\n",
                         table->name, idx->column_name, scan.count);
             }
@@ -5143,13 +5144,30 @@ typedef struct {
     Context ctx;
 } CustomDriverImpl;
 
+#define DEFAULT_DB_PATH "auspex.db"
+#define LEGACY_DB_PATH "mypl.db"
+
+const char* default_db_path(void) {
+    static int warned = 0;
+    if (!os_file_exists(DEFAULT_DB_PATH) && os_file_exists(LEGACY_DB_PATH)) {
+        if (!warned) {
+            fprintf(stderr, "auspex: using legacy database '" LEGACY_DB_PATH "'; rename it "
+                            "(and its .packages/.programs files) to '" DEFAULT_DB_PATH
+                            "' (support ends in v0.4.0)\n");
+            warned = 1;
+        }
+        return LEGACY_DB_PATH;
+    }
+    return DEFAULT_DB_PATH;
+}
+
 static int custom_open(DBDriver* driver, const char* connection_string) {
     CustomDriverImpl* impl = malloc(sizeof(CustomDriverImpl));
     if (impl == NULL) {
         snprintf(driver->error_message, sizeof(driver->error_message), "out of memory");
         return 0;
     }
-    impl->ctx.db_path = connection_string != NULL ? connection_string : "mypl.db";
+    impl->ctx.db_path = connection_string != NULL ? connection_string : default_db_path();
     impl->ctx.pager = NULL;
     if (!catalog_open(&impl->ctx)) {
         snprintf(driver->error_message, sizeof(driver->error_message),

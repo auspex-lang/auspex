@@ -3,17 +3,17 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int run_mypl(const char* source, const char* args, char* out, size_t out_size) {
-    FILE* f = fopen("/tmp/test_phase4_src.mypl", "w");
+static int run_auspex(const char* source, const char* args, char* out, size_t out_size) {
+    FILE* f = fopen("/tmp/test_phase4_src.apx", "w");
     if (f == NULL) return -1;
     fprintf(f, "%s", source);
     fclose(f);
 
     char cmd[1024];
     if (args != NULL) {
-        snprintf(cmd, sizeof(cmd), "./bin/mypl /tmp/test_phase4_src.mypl %s > /tmp/test_phase4_out.txt 2>&1", args);
+        snprintf(cmd, sizeof(cmd), "./bin/auspex /tmp/test_phase4_src.apx %s > /tmp/test_phase4_out.txt 2>&1", args);
     } else {
-        snprintf(cmd, sizeof(cmd), "./bin/mypl /tmp/test_phase4_src.mypl > /tmp/test_phase4_out.txt 2>&1");
+        snprintf(cmd, sizeof(cmd), "./bin/auspex /tmp/test_phase4_src.apx > /tmp/test_phase4_out.txt 2>&1");
     }
     int rc = system(cmd);
 
@@ -28,11 +28,11 @@ static int run_mypl(const char* source, const char* args, char* out, size_t out_
 }
 
 TEST(phase4_package_spec_body_qualified_call) {
-    remove("mypl.db");
-    remove("mypl.db.packages");
+    remove("auspex.db");
+    remove("auspex.db.packages");
     remove("/tmp/phase4_test.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "package counter is\n"
         "    counter int;\n"
         "    proc inc() -> int;\n"
@@ -59,11 +59,11 @@ TEST(phase4_package_spec_body_qualified_call) {
 }
 
 TEST(phase4_package_state_persists_across_calls) {
-    remove("mypl.db");
-    remove("mypl.db.packages");
+    remove("auspex.db");
+    remove("auspex.db.packages");
     remove("/tmp/phase4_test.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "package counter is\n"
         "    counter int;\n"
         "    proc inc() -> int;\n"
@@ -91,11 +91,11 @@ TEST(phase4_package_state_persists_across_calls) {
 }
 
 TEST(phase4_private_member_rejected_from_outside) {
-    remove("mypl.db");
-    remove("mypl.db.packages");
+    remove("auspex.db");
+    remove("auspex.db.packages");
     remove("/tmp/phase4_test.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "package counter is\n"
         "    proc inc() -> int;\n"
         "end counter;\n"
@@ -121,7 +121,7 @@ TEST(phase4_private_member_rejected_from_outside) {
 TEST(phase4_catalog_persistence_sidecar) {
     /* First run defines a package and leaves it in the sidecar. */
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "package counter is\n"
         "    counter int;\n"
         "    proc inc() -> int;\n"
@@ -137,7 +137,7 @@ TEST(phase4_catalog_persistence_sidecar) {
     ASSERT_INT_EQ(0, rc);
 
     /* Second run uses the persisted package without redefining it. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    counter.inc();\n"
         "    counter.inc();\n"
@@ -146,14 +146,14 @@ TEST(phase4_catalog_persistence_sidecar) {
         NULL, out, sizeof(out));
     ASSERT_INT_EQ(0, rc);
     ASSERT_INT_EQ(2, atoi(out));
-    remove("mypl.db.packages");
+    remove("auspex.db.packages");
 }
 
 #ifdef USE_SQLITE
 TEST(phase4_catalog_persistence_sqlite) {
     remove("/tmp/phase4_test.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "package counter is\n"
         "    counter int;\n"
         "    proc inc() -> int;\n"
@@ -168,7 +168,7 @@ TEST(phase4_catalog_persistence_sqlite) {
         "--db /tmp/phase4_test.db", out, sizeof(out));
     ASSERT_INT_EQ(0, rc);
 
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    counter.inc();\n"
         "    return counter.get();\n"

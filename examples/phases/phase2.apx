@@ -24,7 +24,7 @@ proc compute(x int, doubled in out int, squared out int) -> int {
 block {
     print "=== func calls ===";
     print int_to_string(square(7));
-    print greet("MyPL");
+    print greet("Auspex");
 
     print "=== IN OUT parameters ===";
     int a = 10;

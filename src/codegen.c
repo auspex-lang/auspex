@@ -2262,10 +2262,10 @@ static void compile_package_members(Compiler* compiler, Program* program) {
 /* their line numbers. Undefined flags evaluate to false.                     */
 /* -------------------------------------------------------------------------- */
 
-#define CC_MAX_FLAGS MYPL_CC_MAX_FLAGS
+#define CC_MAX_FLAGS AUSPEX_CC_MAX_FLAGS
 /* Room for the built-in PLATFORM_* flags on top of the command line's. */
 #define CC_FLAG_CAPACITY (CC_MAX_FLAGS + 2)
-#define CC_NAME_MAX MYPL_CC_FLAG_NAME_MAX
+#define CC_NAME_MAX AUSPEX_CC_FLAG_NAME_MAX
 #define CC_MAX_DEPTH 16
 
 typedef struct {

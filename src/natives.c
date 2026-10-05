@@ -2249,7 +2249,7 @@ static int native_drop_sequence(VM* vm, int argc, Value* argv, Value* out) {
     return 1;
 }
 
-/* external_call marshalling: MyPL int, float and string map to C int, double
+/* external_call marshalling: Auspex int, float and string map to C int, double
  * and const char*. The argument's C type follows the runtime type of argv[2];
  * the return type is selected by which external_call* native was called. */
 /* Same order as EXTERNAL_SIG_INT/FLOAT/STRING, so a signature's return type
@@ -2276,7 +2276,7 @@ static int ext_resolve(VM* vm, const char* who, const char* lib, const char* sym
     return 1;
 }
 
-/* Wraps a C return value of kind `ret` as a MyPL value. */
+/* Wraps a C return value of kind `ret` as a Auspex value. */
 static int ext_return_value(VM* vm, int ret, int i_ret, double f_ret, const char* s_ret, Value* out) {
     if (ret == EXT_INT) {
         *out = value_int(i_ret);

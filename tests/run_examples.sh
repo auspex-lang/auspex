@@ -2,7 +2,7 @@
 # Smoke-test every runnable example in examples/ (top level and phases/):
 # each must exit 0.
 #
-# Usage: tests/run_examples.sh [path/to/mypl] [example.mypl...]
+# Usage: tests/run_examples.sh [path/to/auspex] [example.apx...]
 #
 # Each example runs in its own temporary copy of examples/, so database files
 # and imports never leak between runs. An example with no directives runs
@@ -10,26 +10,26 @@
 #
 #   // smoke: args --db :memory:      run with these arguments; one run per
 #                                     args line (e.g. a second -DDEBUG run)
-#   // smoke: setup phase7_setup.mypl run another example first, same dir
-#   // smoke: requires sqlite         skip unless mypl was built with SQLite
+#   // smoke: setup phase7_setup.apx run another example first, same dir
+#   // smoke: requires sqlite         skip unless auspex was built with SQLite
 #   // smoke: requires linux          skip unless running on Linux
 #   // smoke: skip <reason>           never run (e.g. an imported module)
 
 set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-MYPL=${1:-$ROOT/bin/mypl}
+AUSPEX=${1:-$ROOT/bin/auspex}
 shift $(( $# > 0 ? 1 : 0 ))
-case $MYPL in /*) ;; *) MYPL=$PWD/$MYPL ;; esac
+case $AUSPEX in /*) ;; *) AUSPEX=$PWD/$AUSPEX ;; esac
 TIMEOUT_SECONDS=${EXAMPLE_TIMEOUT:-30}
 
-if [ ! -x "$MYPL" ]; then
-    echo "run_examples: $MYPL is not executable (run make first)" >&2
+if [ ! -x "$AUSPEX" ]; then
+    echo "run_examples: $AUSPEX is not executable (run make first)" >&2
     exit 2
 fi
 
 have_sqlite=1
-if "$MYPL" --help 2>&1 | grep -q 'disabled in this build'; then
+if "$AUSPEX" --help 2>&1 | grep -q 'disabled in this build'; then
     have_sqlite=0
 fi
 
@@ -40,7 +40,7 @@ elif command -v gtimeout >/dev/null 2>&1; then
     timeout_cmd="gtimeout $TIMEOUT_SECONDS"
 fi
 
-work=$(mktemp -d "${TMPDIR:-/tmp}/mypl-examples.XXXXXX")
+work=$(mktemp -d "${TMPDIR:-/tmp}/auspex-examples.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 
 if [ $# -gt 0 ]; then
@@ -48,7 +48,7 @@ if [ $# -gt 0 ]; then
 else
     # Top-level examples/ and the phases/ walkthroughs. Subdirectories that
     # hold imported modules (examples/modules/) are deliberately not globbed.
-    examples=("$ROOT"/examples/*.mypl "$ROOT"/examples/phases/*.mypl)
+    examples=("$ROOT"/examples/*.apx "$ROOT"/examples/phases/*.apx)
 fi
 
 passed=0
@@ -74,9 +74,9 @@ has_directive() { # file key
 }
 
 for example in "${examples[@]}"; do
-    name=$(basename "$example" .mypl)
+    name=$(basename "$example" .apx)
     # Path of the example inside the copied examples/ tree, e.g.
-    # examples/phases/phase7.mypl — setup files resolve next to it.
+    # examples/phases/phase7.apx — setup files resolve next to it.
     rel=${example#"$ROOT"/}
     rel_dir=$(dirname "$rel")
 
@@ -110,7 +110,7 @@ for example in "${examples[@]}"; do
 
         ok=1
         for setup in $(directive "$example" setup); do
-            if ! (cd "$dir" && $timeout_cmd "$MYPL" "$rel_dir/$setup" </dev/null >"$dir/setup.out" 2>&1); then
+            if ! (cd "$dir" && $timeout_cmd "$AUSPEX" "$rel_dir/$setup" </dev/null >"$dir/setup.out" 2>&1); then
                 ok=0
                 cp "$dir/setup.out" "$dir/out"
                 break
@@ -118,7 +118,7 @@ for example in "${examples[@]}"; do
         done
         if [ $ok -eq 1 ]; then
             # shellcheck disable=SC2086 # args is a word list from the directive
-            (cd "$dir" && $timeout_cmd "$MYPL" $args "$rel" </dev/null >"$dir/out" 2>&1) || ok=0
+            (cd "$dir" && $timeout_cmd "$AUSPEX" $args "$rel" </dev/null >"$dir/out" 2>&1) || ok=0
         fi
 
         if [ $ok -eq 1 ]; then

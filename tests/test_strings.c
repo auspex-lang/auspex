@@ -307,10 +307,10 @@ TEST(natives_replace_replaces_all_occurrences) {
     Value argv[3];
     argv[0] = value_string(strdup("hello world world"));
     argv[1] = value_string(strdup("world"));
-    argv[2] = value_string(strdup("mypl"));
+    argv[2] = value_string(strdup("auspex"));
     Value out;
     ASSERT_INT_EQ(1, run_native_string("replace", 3, argv, &out));
-    ASSERT_STRING_EQ("hello mypl mypl", out.as.as_string);
+    ASSERT_STRING_EQ("hello auspex auspex", out.as.as_string);
 }
 
 TEST(natives_replace_rejects_non_strings) {

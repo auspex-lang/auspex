@@ -741,7 +741,7 @@ TEST(compiler_compiles_imported_procedure) {
         cleanup_registered = 1;
     }
 
-    snprintf(s_module_path, sizeof(s_module_path), "/tmp/mypl_test_module_XXXXXX");
+    snprintf(s_module_path, sizeof(s_module_path), "/tmp/auspex_test_module_XXXXXX");
     int fd = mkstemp(s_module_path);
     ASSERT_INT_EQ(1, fd >= 0);
     close(fd);
@@ -821,7 +821,7 @@ TEST(compiler_options_apply_to_imported_modules) {
         cleanup_registered = 1;
     }
 
-    snprintf(s_module_path, sizeof(s_module_path), "/tmp/mypl_test_module_XXXXXX");
+    snprintf(s_module_path, sizeof(s_module_path), "/tmp/auspex_test_module_XXXXXX");
     int fd = mkstemp(s_module_path);
     ASSERT_INT_EQ(1, fd >= 0);
     close(fd);
@@ -875,7 +875,7 @@ TEST(compiler_reports_original_error_for_bad_import) {
         cleanup_registered = 1;
     }
 
-    snprintf(s_bad_module_path, sizeof(s_bad_module_path), "/tmp/mypl_test_bad_XXXXXX");
+    snprintf(s_bad_module_path, sizeof(s_bad_module_path), "/tmp/auspex_test_bad_XXXXXX");
     int fd = mkstemp(s_bad_module_path);
     ASSERT_INT_EQ(1, fd >= 0);
     close(fd);
@@ -885,7 +885,7 @@ TEST(compiler_reports_original_error_for_bad_import) {
     fprintf(f, "proc broken() -> int { return 1;\n");
     fclose(f);
 
-    snprintf(s_mid_module_path, sizeof(s_mid_module_path), "/tmp/mypl_test_mid_XXXXXX");
+    snprintf(s_mid_module_path, sizeof(s_mid_module_path), "/tmp/auspex_test_mid_XXXXXX");
     fd = mkstemp(s_mid_module_path);
     ASSERT_INT_EQ(1, fd >= 0);
     close(fd);
@@ -919,7 +919,7 @@ TEST(compiler_rejects_too_many_imports) {
     size_t pos = 0;
     for (int i = 0; i < 65; i++) {
         pos += (size_t)snprintf(source + pos, sizeof(source) - pos,
-                                "import \"m%d.mypl\";\n", i);
+                                "import \"m%d.apx\";\n", i);
     }
     pos += (size_t)snprintf(source + pos, sizeof(source) - pos,
                             "proc main() -> int { return 0; }\n");
@@ -957,7 +957,7 @@ TEST(compiler_accepts_typed_array_program) {
 }
 
 TEST(compiler_typechecks_sql_row_field_with_context) {
-    char path[] = "/tmp/mypl_test_compiler_ctx_XXXXXX.db";
+    char path[] = "/tmp/auspex_test_compiler_ctx_XXXXXX.db";
     int fd = mkstemp(path);
     if (fd >= 0) close(fd);
     unlink(path);

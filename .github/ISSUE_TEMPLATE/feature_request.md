@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an idea for MyPL
+about: Suggest an idea for Auspex
 title: ""
 labels: enhancement
 ---
@@ -11,7 +11,7 @@ labels: enhancement
 
 ## Proposed syntax / behavior
 
-<!-- Show example MyPL code if you can. -->
+<!-- Show example Auspex code if you can. -->
 
 ## Alternatives considered
 

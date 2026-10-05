@@ -1,5 +1,5 @@
 // Phase 12: external_call float/string marshalling example.
-// MyPL int, float and string arguments are passed as C int, double and
+// Auspex int, float and string arguments are passed as C int, double and
 // const char*. The native name selects the C return type:
 //   external_call        -> int
 //   external_call_float  -> float
@@ -22,7 +22,7 @@ $end
     float root = external_call_float(libm, "sqrt", 2.0);
     print float_to_string(root);
 
-    string shell = external_call_string(libc, "getenv", "MYPL_UNSET_VARIABLE");
+    string shell = external_call_string(libc, "getenv", "AUSPEX_UNSET_VARIABLE");
     print nvl(shell, "(not set)");
     return 0;
 }

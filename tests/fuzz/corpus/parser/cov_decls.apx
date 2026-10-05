@@ -1,6 +1,6 @@
 // Parser coverage seed: top-level declarations.
-import "other.mypl";
-import "lib/helper.mypl";
+import "other.apx";
+import "lib/helper.apx";
 
 struct Account {
     id int,

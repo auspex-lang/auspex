@@ -324,7 +324,7 @@ char* packages_filter_redefined(const char* loaded, const char* source) {
 
 #ifdef USE_SQLITE
 static const char* PACKAGES_TABLE =
-    "CREATE TABLE IF NOT EXISTS _mypl_packages ("
+    "CREATE TABLE IF NOT EXISTS _auspex_packages ("
     "    name TEXT PRIMARY KEY,"
     "    spec_source TEXT,"
     "    body_source TEXT"
@@ -349,10 +349,10 @@ static int sqlite_save_source(DBDriver* driver, const char* source, int append) 
 
     sqlite3_stmt* stmt = NULL;
     const char* sql = append
-        ? "INSERT INTO _mypl_packages (name, spec_source, body_source) "
+        ? "INSERT INTO _auspex_packages (name, spec_source, body_source) "
           "VALUES ('__packages__', '', ?1) "
           "ON CONFLICT(name) DO UPDATE SET body_source = body_source || ?1"
-        : "INSERT INTO _mypl_packages (name, spec_source, body_source) "
+        : "INSERT INTO _auspex_packages (name, spec_source, body_source) "
           "VALUES ('__packages__', '', ?1) "
           "ON CONFLICT(name) DO UPDATE SET body_source = ?1";
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
@@ -383,7 +383,7 @@ static char* sqlite_load_source(DBDriver* driver) {
     sqlite3* db = ((SQLiteImpl*)driver->impl)->db;
     sqlite3_stmt* check = NULL;
     if (sqlite3_prepare_v2(db,
-                           "SELECT name FROM sqlite_master WHERE type='table' AND name='_mypl_packages'",
+                           "SELECT name FROM sqlite_master WHERE type='table' AND name='_auspex_packages'",
                            -1, &check, NULL) != SQLITE_OK) {
         return NULL;
     }
@@ -392,7 +392,7 @@ static char* sqlite_load_source(DBDriver* driver) {
     if (!exists) return NULL;
 
     sqlite3_stmt* stmt = NULL;
-    const char* sql = "SELECT COALESCE(body_source, '') FROM _mypl_packages";
+    const char* sql = "SELECT COALESCE(body_source, '') FROM _auspex_packages";
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
         return NULL;
     }
@@ -491,7 +491,9 @@ static char* strip_main_procedure(const char* source) {
     return out;
 }
 
-#define PACKAGE_SOURCE_MARKER "// __MYPL_PACKAGE_SOURCE__"
+#define PACKAGE_SOURCE_MARKER "// __AUSPEX_PACKAGE_SOURCE__"
+/* Written by MyPL; still recognized until v0.4.0. */
+#define LEGACY_PACKAGE_SOURCE_MARKER "// __MYPL_PACKAGE_SOURCE__"
 
 static int custom_save_source(Context* ctx, const char* source, int append) {
     char* path = sidecar_path(ctx);
@@ -513,7 +515,9 @@ static int custom_save_source(Context* ctx, const char* source, int append) {
        the marker and ends with a newline: add neither a second time. */
     const char* body = stripped;
     while (*body == ' ' || *body == '\t' || *body == '\n' || *body == '\r') body++;
-    int has_marker = strncmp(body, PACKAGE_SOURCE_MARKER, strlen(PACKAGE_SOURCE_MARKER)) == 0;
+    int has_marker =
+        strncmp(body, PACKAGE_SOURCE_MARKER, strlen(PACKAGE_SOURCE_MARKER)) == 0 ||
+        strncmp(body, LEGACY_PACKAGE_SOURCE_MARKER, strlen(LEGACY_PACKAGE_SOURCE_MARKER)) == 0;
     size_t len = strlen(stripped);
     int ends_in_newline = len > 0 && stripped[len - 1] == '\n';
     fprintf(f, "%s%s%s", has_marker ? "" : PACKAGE_SOURCE_MARKER "\n", stripped,

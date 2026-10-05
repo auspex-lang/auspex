@@ -798,10 +798,10 @@ TEST(natives_trim_start_rejects_non_string) {
 }
 
 TEST(natives_env_get_returns_variable_value) {
-    setenv("MYPL_TEST_VAR", "hello", 1);
+    setenv("AUSPEX_TEST_VAR", "hello", 1);
     VM* vm = vm_init();
     Value argv[1];
-    argv[0] = value_string(strdup("MYPL_TEST_VAR"));
+    argv[0] = value_string(strdup("AUSPEX_TEST_VAR"));
     Value result;
     ASSERT_INT_EQ(1, native_call(vm, native_find("env_get"), 1, argv, &result));
     ASSERT_INT_EQ(VAL_STRING, result.type);
@@ -809,7 +809,7 @@ TEST(natives_env_get_returns_variable_value) {
     value_release(argv[0]);
     value_release(result);
     vm_free(vm);
-    unsetenv("MYPL_TEST_VAR");
+    unsetenv("AUSPEX_TEST_VAR");
 }
 
 TEST(natives_env_get_rejects_non_string) {
@@ -956,21 +956,21 @@ TEST(natives_read_line_reads_from_stdin) {
 }
 
 TEST(natives_is_dir_detects_directory) {
-    system("rm -rf /tmp/mypl_isdir_test");
-    system("mkdir -p /tmp/mypl_isdir_test");
+    system("rm -rf /tmp/auspex_isdir_test");
+    system("mkdir -p /tmp/auspex_isdir_test");
 
     VM* vm = vm_init();
     Value argv[1];
     Value result;
 
-    argv[0] = value_string(strdup("/tmp/mypl_isdir_test"));
+    argv[0] = value_string(strdup("/tmp/auspex_isdir_test"));
     ASSERT_INT_EQ(1, native_call(vm, native_find("is_dir"), 1, argv, &result));
     ASSERT_INT_EQ(VAL_BOOL, result.type);
     ASSERT_INT_EQ(1, result.as.as_int);
     value_release(argv[0]);
     value_release(result);
 
-    argv[0] = value_string(strdup("/tmp/mypl_isdir_test_does_not_exist"));
+    argv[0] = value_string(strdup("/tmp/auspex_isdir_test_does_not_exist"));
     ASSERT_INT_EQ(1, native_call(vm, native_find("is_dir"), 1, argv, &result));
     ASSERT_INT_EQ(VAL_BOOL, result.type);
     ASSERT_INT_EQ(0, result.as.as_int);
@@ -978,15 +978,15 @@ TEST(natives_is_dir_detects_directory) {
     value_release(result);
 
     vm_free(vm);
-    system("rm -rf /tmp/mypl_isdir_test");
+    system("rm -rf /tmp/auspex_isdir_test");
 }
 
 TEST(natives_mkdir_creates_directory) {
-    system("rm -rf /tmp/mypl_mkdir_test");
+    system("rm -rf /tmp/auspex_mkdir_test");
 
     VM* vm = vm_init();
     Value argv[1];
-    argv[0] = value_string(strdup("/tmp/mypl_mkdir_test"));
+    argv[0] = value_string(strdup("/tmp/auspex_mkdir_test"));
     Value result;
     ASSERT_INT_EQ(1, native_call(vm, native_find("mkdir"), 1, argv, &result));
     ASSERT_INT_EQ(VAL_BOOL, result.type);
@@ -994,7 +994,7 @@ TEST(natives_mkdir_creates_directory) {
     value_release(argv[0]);
     value_release(result);
 
-    argv[0] = value_string(strdup("/tmp/mypl_mkdir_test"));
+    argv[0] = value_string(strdup("/tmp/auspex_mkdir_test"));
     ASSERT_INT_EQ(1, native_call(vm, native_find("is_dir"), 1, argv, &result));
     ASSERT_INT_EQ(VAL_BOOL, result.type);
     ASSERT_INT_EQ(1, result.as.as_int);
@@ -1002,17 +1002,17 @@ TEST(natives_mkdir_creates_directory) {
     value_release(result);
 
     vm_free(vm);
-    system("rm -rf /tmp/mypl_mkdir_test");
+    system("rm -rf /tmp/auspex_mkdir_test");
 }
 
 TEST(natives_list_dir_lists_entries) {
-    system("rm -rf /tmp/mypl_listdir_test");
-    system("mkdir -p /tmp/mypl_listdir_test");
-    system("touch /tmp/mypl_listdir_test/hello.txt");
+    system("rm -rf /tmp/auspex_listdir_test");
+    system("mkdir -p /tmp/auspex_listdir_test");
+    system("touch /tmp/auspex_listdir_test/hello.txt");
 
     VM* vm = vm_init();
     Value argv[1];
-    argv[0] = value_string(strdup("/tmp/mypl_listdir_test"));
+    argv[0] = value_string(strdup("/tmp/auspex_listdir_test"));
     Value result;
     ASSERT_INT_EQ(1, native_call(vm, native_find("list_dir"), 1, argv, &result));
     ASSERT_INT_EQ(VAL_ARRAY, result.type);
@@ -1022,7 +1022,7 @@ TEST(natives_list_dir_lists_entries) {
     value_release(result);
 
     vm_free(vm);
-    system("rm -rf /tmp/mypl_listdir_test");
+    system("rm -rf /tmp/auspex_listdir_test");
 }
 
 TEST(natives_is_digit_checks_single_character) {

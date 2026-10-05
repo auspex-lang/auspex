@@ -24,7 +24,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
     char error[256];
     error[0] = '\0';
-    char* out = cc_preprocess(source, "fuzz.mypl", &options, error, sizeof(error));
+    char* out = cc_preprocess(source, "fuzz.apx", &options, error, sizeof(error));
     if (out != NULL) {
         /* Excluded regions are blanked in place: same length, newlines kept. */
         FUZZ_CHECK(strlen(out) == len, "preprocessor changed source length");
@@ -33,7 +33,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
                        "preprocessor moved a newline");
         }
         char parse_error[256];
-        Program* program = parse_with_path(out, "fuzz.mypl", parse_error, sizeof(parse_error));
+        Program* program = parse_with_path(out, "fuzz.apx", parse_error, sizeof(parse_error));
         if (program != NULL) free_program(program);
         free(out);
     } else {

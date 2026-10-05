@@ -2,11 +2,11 @@
 //
 // Declaring a package with the name of a built-in (dbms_output, utl_file,
 // dbms_sql) replaces the built-in; the others keep their standard behavior.
-// Run with: ./bin/mypl examples/phase12_package_override.mypl
+// Run with: ./bin/auspex examples/phase12_package_override.apx
 //
-// Packages are stored with the database (mypl.db.packages, or the SQLite
+// Packages are stored with the database (auspex.db.packages, or the SQLite
 // database with --db), so the override also applies to later programs run
-// against the same database. Delete mypl.db.packages to get the built-in back.
+// against the same database. Delete auspex.db.packages to get the built-in back.
 
 package dbms_sql is
     proc execute(sql string) -> int;

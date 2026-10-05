@@ -2,7 +2,7 @@
 //
 // This example runs with the default custom engine using parameterless SQL.
 // To exercise positional binds (?1, ?2, ...), run it against SQLite:
-//   ./bin/mypl examples/phase12_dbms_sql.mypl --db /tmp/demo.db
+//   ./bin/auspex examples/phase12_dbms_sql.apx --db /tmp/demo.db
 // The custom engine ignores ?var placeholders, so parameterless SQL is used
 // below for portability.
 

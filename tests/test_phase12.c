@@ -4,13 +4,13 @@
 #include <string.h>
 #include <unistd.h>
 
-static int run_mypl(const char* source, char* out, size_t out_size) {
-    FILE* f = fopen("/tmp/test_phase12_src.mypl", "w");
+static int run_auspex(const char* source, char* out, size_t out_size) {
+    FILE* f = fopen("/tmp/test_phase12_src.apx", "w");
     if (f == NULL) return -1;
     fprintf(f, "%s", source);
     fclose(f);
 
-    int rc = system("./bin/mypl /tmp/test_phase12_src.mypl > /tmp/test_phase12_out.txt 2>&1");
+    int rc = system("./bin/auspex /tmp/test_phase12_src.apx > /tmp/test_phase12_out.txt 2>&1");
 
     FILE* outf = fopen("/tmp/test_phase12_out.txt", "r");
     if (outf != NULL) {
@@ -38,14 +38,14 @@ static int count_occurrences(const char* out, const char* substr) {
 }
 
 static void clean_trigger_db(void) {
-    remove("mypl.db");
-    remove("mypl.db.programs");
+    remove("auspex.db");
+    remove("auspex.db.programs");
 }
 
 TEST(phase12_nextval_persists_across_restarts) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create_sequence(\"seq_a\", 100, 5);\n"
         "    print nextval(\"seq_a\");\n"
@@ -58,7 +58,7 @@ TEST(phase12_nextval_persists_across_restarts) {
     ASSERT_INT_EQ(1, output_contains(out, "105"));
 
     /* New process: the sequence continues where it left off. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    print nextval(\"seq_a\");\n"
         "    print currval(\"seq_a\");\n"
@@ -70,9 +70,9 @@ TEST(phase12_nextval_persists_across_restarts) {
 }
 
 TEST(phase12_currval_after_restart) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create_sequence(\"seq_b\", 7, 3);\n"
         "    print nextval(\"seq_b\");\n"
@@ -83,7 +83,7 @@ TEST(phase12_currval_after_restart) {
     ASSERT_INT_EQ(1, output_contains(out, "7"));
 
     /* New process: currval works without calling nextval first. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    print currval(\"seq_b\");\n"
         "    print nextval(\"seq_b\");\n"
@@ -96,9 +96,9 @@ TEST(phase12_currval_after_restart) {
 }
 
 TEST(phase12_drop_sequence_persists) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create_sequence(\"seq_c\", 1, 1);\n"
         "    print nextval(\"seq_c\");\n"
@@ -109,7 +109,7 @@ TEST(phase12_drop_sequence_persists) {
     ASSERT_INT_EQ(0, rc);
 
     /* New process: the dropped sequence stays gone. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    print nextval(\"seq_c\");\n"
         "    return 0;\n"
@@ -120,10 +120,10 @@ TEST(phase12_drop_sequence_persists) {
 }
 
 TEST(phase12_currval_before_nextval_errors) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
     /* currval before the first nextval is an error (has_value semantics). */
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create_sequence(\"seq_d\", 50, 1);\n"
         "    print currval(\"seq_d\");\n"
@@ -134,7 +134,7 @@ TEST(phase12_currval_before_nextval_errors) {
 
     /* The sequence exists after that run, but nextval was never called, so
        currval must still error in a new process. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    print currval(\"seq_d\");\n"
         "    return 0;\n"
@@ -143,7 +143,7 @@ TEST(phase12_currval_before_nextval_errors) {
     ASSERT_INT_EQ(1, rc);
 
     /* The first nextval in a new process still returns the start value. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    print nextval(\"seq_d\");\n"
         "    return 0;\n"
@@ -154,9 +154,9 @@ TEST(phase12_currval_before_nextval_errors) {
 }
 
 TEST(phase12_sequence_survives_other_catalog_writes) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create_sequence(\"seq_e\", 1000, 10);\n"
         "    print nextval(\"seq_e\");\n"
@@ -167,7 +167,7 @@ TEST(phase12_sequence_survives_other_catalog_writes) {
     ASSERT_INT_EQ(1, output_contains(out, "1000"));
 
     /* Other DDL/DML rewrites the catalog page; the sequence must survive. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    create table t12 (id int, tag string);\n"
         "    insert into t12 values (1, \"x\");\n"
@@ -178,7 +178,7 @@ TEST(phase12_sequence_survives_other_catalog_writes) {
     ASSERT_INT_EQ(0, rc);
     ASSERT_INT_EQ(1, output_contains(out, "1010"));
 
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    print nextval(\"seq_e\");\n"
         "    int n = -1;\n"
@@ -193,9 +193,9 @@ TEST(phase12_sequence_survives_other_catalog_writes) {
 }
 
 TEST(phase12_duplicate_create_after_restart_errors) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create_sequence(\"seq_f\", 1, 1);\n"
         "    return 0;\n"
@@ -204,7 +204,7 @@ TEST(phase12_duplicate_create_after_restart_errors) {
     ASSERT_INT_EQ(0, rc);
 
     /* New process: re-creating a persisted sequence is a duplicate. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    create_sequence(\"seq_f\", 1, 1);\n"
         "    return 0;\n"
@@ -214,9 +214,9 @@ TEST(phase12_duplicate_create_after_restart_errors) {
 }
 
 TEST(phase12_missing_sequence_errors_unchanged) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    print nextval(\"nope_seq\");\n"
         "    return 0;\n"
@@ -230,7 +230,7 @@ TEST(phase12_missing_sequence_errors_unchanged) {
 TEST(phase12_row_trigger_insert_fires_per_row) {
     clean_trigger_db();
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "trigger trg_r_ins after insert on trg_ri for each row {\n"
         "    print \"row-ins\";\n"
         "    print :new.id;\n"
@@ -253,7 +253,7 @@ TEST(phase12_row_trigger_insert_fires_per_row) {
 TEST(phase12_row_trigger_update_sees_old_and_new) {
     clean_trigger_db();
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "trigger trg_r_upd after update on trg_ru for each row {\n"
         "    print \"upd\";\n"
         "    print :old.qty;\n"
@@ -280,7 +280,7 @@ TEST(phase12_row_trigger_update_sees_old_and_new) {
 TEST(phase12_row_trigger_delete_sees_old) {
     clean_trigger_db();
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "trigger trg_r_del after delete on trg_rd for each row {\n"
         "    print \"del\";\n"
         "    print :old.id;\n"
@@ -302,7 +302,7 @@ TEST(phase12_row_trigger_delete_sees_old) {
 TEST(phase12_row_and_statement_triggers_both_fire) {
     clean_trigger_db();
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "trigger trg_o_sb before insert on trg_ro {\n"
         "    print \"stmt-before\";\n"
         "}\n"
@@ -342,7 +342,7 @@ TEST(phase12_row_and_statement_triggers_both_fire) {
 TEST(phase12_row_trigger_persists_across_restarts) {
     clean_trigger_db();
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "trigger trg_r_per after insert on trg_rp for each row {\n"
         "    print \"row-persist-fired\";\n"
         "    print :new.id;\n"
@@ -358,7 +358,7 @@ TEST(phase12_row_trigger_persists_across_restarts) {
 
     /* New process, source no longer declares the trigger: the persisted
        FOR EACH ROW definition is recompiled and keeps firing with :new. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    insert into trg_rp values (2);\n"
         "    return 0;\n"
@@ -373,7 +373,7 @@ TEST(phase12_row_trigger_persists_across_restarts) {
 TEST(phase12_row_trigger_fires_on_dynamic_sql) {
     clean_trigger_db();
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "trigger trg_r_dyn after insert on trg_rdy for each row {\n"
         "    print \"dyn-row\";\n"
         "    print :new.id;\n"
@@ -394,7 +394,7 @@ TEST(phase12_row_trigger_wrong_context_errors) {
     clean_trigger_db();
     char out[512];
     /* :new is not available in a DELETE trigger: runtime error. */
-    int rc = run_mypl(
+    int rc = run_auspex(
         "trigger trg_r_bad after delete on trg_rb for each row {\n"
         "    print :new.id;\n"
         "}\n"
@@ -414,7 +414,7 @@ TEST(phase12_row_trigger_requires_dml_event) {
     clean_trigger_db();
     char out[512];
     /* FOR EACH ROW only makes sense for row-changing events. */
-    int rc = run_mypl(
+    int rc = run_auspex(
         "trigger trg_r_ddl after create on trg_rddl for each row {\n"
         "    print \"nope\";\n"
         "}\n"
@@ -437,7 +437,7 @@ TEST(phase12_row_trigger_requires_dml_event) {
 TEST(phase12_trigger_static_dml_on_own_table_errors) {
     clean_trigger_db();
     char out[1024];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "trigger trg_sm before insert on trg_sm_t {\n"
         "    insert into trg_sm_t values (99);\n"
         "}\n"
@@ -459,7 +459,7 @@ TEST(phase12_trigger_static_dml_on_own_table_errors) {
 TEST(phase12_row_trigger_dynamic_dml_on_own_table_errors) {
     clean_trigger_db();
     char out[1024];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "trigger trg_rd after insert on trg_rd_t for each row {\n"
         "    execute_immediate(\"insert into trg_rd_t values (99)\");\n"
         "}\n"
@@ -479,7 +479,7 @@ TEST(phase12_trigger_dml_through_a_proc_errors) {
     /* No trigger fires for the UPDATE itself; the DML check catches it. */
     clean_trigger_db();
     char out[1024];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc bump() -> int {\n"
         "    update trg_pr_t set id = 5;\n"
         "    return 0;\n"
@@ -502,7 +502,7 @@ TEST(phase12_trigger_dml_through_a_proc_errors) {
 TEST(phase12_trigger_cycle_through_another_table_errors) {
     clean_trigger_db();
     char out[1024];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "trigger trg_cy_a after insert on trg_cy_a_t {\n"
         "    insert into trg_cy_b_t values (1);\n"
         "}\n"
@@ -526,7 +526,7 @@ TEST(phase12_trigger_cycle_through_another_table_errors) {
 TEST(phase12_trigger_self_modification_error_is_catchable) {
     clean_trigger_db();
     char out[1024];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "trigger trg_ca after insert on trg_ca_t {\n"
         "    delete from trg_ca_t;\n"
         "}\n"
@@ -551,14 +551,14 @@ TEST(phase12_trigger_self_modification_error_is_catchable) {
 /* --- dbms_sql cursor API (Phase 12 Task 4) --- */
 
 static void clean_dbms_sql_db(void) {
-    remove("mypl.db");
-    remove("mypl.db.programs");
+    remove("auspex.db");
+    remove("auspex.db.programs");
 }
 
 TEST(phase12_dbms_sql_open_parse_execute_dml) {
     clean_dbms_sql_db();
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table dbms_t (id int, name string);\n"
         "    int c = dbms_sql.open_cursor();\n"
@@ -577,7 +577,7 @@ TEST(phase12_dbms_sql_open_parse_execute_dml) {
 TEST(phase12_dbms_sql_fetch_rows) {
     clean_dbms_sql_db();
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table dbms_t (id int, name string);\n"
         "    insert into dbms_t values (1, 'alice');\n"
@@ -607,7 +607,7 @@ TEST(phase12_dbms_sql_fetch_rows) {
 TEST(phase12_dbms_sql_column_value) {
     clean_dbms_sql_db();
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table dbms_t (id int, name string);\n"
         "    insert into dbms_t values (7, 'carol');\n"
@@ -632,7 +632,7 @@ TEST(phase12_dbms_sql_column_value) {
 TEST(phase12_dbms_sql_close_invalidates_handle) {
     clean_dbms_sql_db();
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    int c = dbms_sql.open_cursor();\n"
         "    dbms_sql.close_cursor(c);\n"
@@ -671,7 +671,7 @@ static int build_marshal_shared_lib(void) {
 TEST(phase12_external_call_float_return) {
     ASSERT_INT_EQ(1, build_marshal_shared_lib());
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    float h = external_call_float(\"/tmp/test_phase12_ext.so\", \"ext_half\", 7);\n"
         "    float s = external_call_float(\"/tmp/test_phase12_ext.so\", \"ext_scale\", 1.5);\n"
@@ -688,7 +688,7 @@ TEST(phase12_external_call_float_return) {
 TEST(phase12_external_call_int_return_from_float_and_string) {
     ASSERT_INT_EQ(1, build_marshal_shared_lib());
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    int f = external_call(\"/tmp/test_phase12_ext.so\", \"ext_floor\", 9.75);\n"
         "    int n = external_call(\"/tmp/test_phase12_ext.so\", \"ext_len\", \"marshal\");\n"
@@ -704,9 +704,9 @@ TEST(phase12_external_call_int_return_from_float_and_string) {
 TEST(phase12_external_call_string_return) {
     ASSERT_INT_EQ(1, build_marshal_shared_lib());
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
-        "    string g = external_call_string(\"/tmp/test_phase12_ext.so\", \"ext_greet\", \"mypl\");\n"
+        "    string g = external_call_string(\"/tmp/test_phase12_ext.so\", \"ext_greet\", \"auspex\");\n"
         "    string a = external_call_string(\"/tmp/test_phase12_ext.so\", \"ext_label\", 3);\n"
         "    string b = external_call_string(\"/tmp/test_phase12_ext.so\", \"ext_float_label\", -0.5);\n"
         "    print g;\n"
@@ -716,14 +716,14 @@ TEST(phase12_external_call_string_return) {
         "}\n",
         out, sizeof(out));
     ASSERT_INT_EQ(0, rc);
-    ASSERT_INT_EQ(1, output_contains(out, "hello, mypl\npositive\nneg\n"));
+    ASSERT_INT_EQ(1, output_contains(out, "hello, auspex\npositive\nneg\n"));
 }
 
 TEST(phase12_external_call_string_result_is_copied) {
     ASSERT_INT_EQ(1, build_marshal_shared_lib());
     char out[256];
     /* ext_greet reuses one static buffer; the first result must not change. */
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    string first = external_call_string(\"/tmp/test_phase12_ext.so\", \"ext_greet\", \"one\");\n"
         "    string second = external_call_string(\"/tmp/test_phase12_ext.so\", \"ext_greet\", \"two\");\n"
@@ -739,7 +739,7 @@ TEST(phase12_external_call_string_result_is_copied) {
 TEST(phase12_external_call_string_null_return_is_null) {
     ASSERT_INT_EQ(1, build_marshal_shared_lib());
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    print nvl(external_call_string(\"/tmp/test_phase12_ext.so\", \"ext_null\", \"x\"), \"fallback\");\n"
         "    return 0;\n"
@@ -751,7 +751,7 @@ TEST(phase12_external_call_string_null_return_is_null) {
 
 TEST(phase12_external_call_rejects_bool_argument) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    external_call_float(\"/tmp/test_phase12_ext.so\", \"ext_scale\", true);\n"
         "    return 0;\n"
@@ -763,7 +763,7 @@ TEST(phase12_external_call_rejects_bool_argument) {
 
 TEST(phase12_external_call_string_result_type_is_checked) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    int n = external_call_string(\"/tmp/test_phase12_ext.so\", \"ext_label\", 1);\n"
         "    return n;\n"
@@ -775,7 +775,7 @@ TEST(phase12_external_call_string_result_type_is_checked) {
 TEST(phase12_external_call_string_missing_symbol_fails) {
     ASSERT_INT_EQ(1, build_marshal_shared_lib());
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    external_call_string(\"/tmp/test_phase12_ext.so\", \"no_such_symbol\", \"x\");\n"
         "    return 0;\n"
@@ -788,7 +788,7 @@ TEST(phase12_external_call_string_missing_symbol_fails) {
 /* --- external_call_sig (#61) ---
    Every descriptor from "i()" to "s(ssss)" goes through its own function
    pointer prototype, spelled out by X-macros in natives.c. This sweep builds
-   a library with one function per descriptor and calls all 363 from MyPL:
+   a library with one function per descriptor and calls all 363 from Auspex:
    a prototype with a wrong type would scramble or crash its call. */
 
 static const char* const SIG_CTYPES[] = {"int", "double", "const char*"};
@@ -854,7 +854,7 @@ TEST(phase12_external_call_sig_sweeps_every_signature) {
                     fprintf(c, "    return k;\n}\n");
                 }
 
-                /* MyPL side: print "name:result" */
+                /* Auspex side: print "name:result" */
                 char sig[16];
                 int sl = snprintf(sig, sizeof(sig), "%c(", "ids"[ret]);
                 for (int i = 0; i < n; i++) sig[sl++] = "ids"[types[i]];
@@ -890,7 +890,7 @@ TEST(phase12_external_call_sig_sweeps_every_signature) {
 
     char* out = malloc(1 << 15);
     ASSERT_PTR_NOT_NULL(out);
-    int rc = run_mypl(src, out, 1 << 15);
+    int rc = run_auspex(src, out, 1 << 15);
     free(src);
     if (rc != 0) fprintf(stderr, "%.400s\n", out);
     ASSERT_INT_EQ(0, rc);
@@ -936,13 +936,13 @@ TEST(phase12_external_call_sig_checks_signature_at_compile_time) {
         char src[512];
         snprintf(src, sizeof(src),
                  "proc main() -> int {\n    print %s;\n    return 0;\n}\n", cases[i].call);
-        int rc = run_mypl(src, out, sizeof(out));
+        int rc = run_auspex(src, out, sizeof(out));
         ASSERT_INT_EQ(1, rc);
         ASSERT_INT_EQ(1, output_contains(out, "Compile error"));
         ASSERT_INT_EQ(1, output_contains(out, cases[i].error));
     }
     /* A signature that is not a literal cannot be checked, so it is refused. */
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    string sig = \"d(dd)\";\n"
         "    print external_call_sig(\"libm.so.6\", \"pow\", sig, 2.0, 3.0);\n"
@@ -968,7 +968,7 @@ TEST(phase12_external_call_sig_types_its_result) {
     ASSERT_INT_EQ(0, system("cc -shared -fPIC -o /tmp/test_phase12_sig_typed.so "
                             "/tmp/test_phase12_sig_typed.c"));
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    string lib = \"/tmp/test_phase12_sig_typed.so\";\n"
         "    float x = external_call_sig(lib, \"scale\", \"d(di)\", 1.5, 3);\n"
@@ -990,13 +990,13 @@ TEST(phase12_external_call_sig_types_its_result) {
 }
 
 #ifdef USE_SQLITE
-static int run_mypl_sqlite(const char* source, char* out, size_t out_size) {
-    FILE* f = fopen("/tmp/test_phase12_sql_src.mypl", "w");
+static int run_auspex_sqlite(const char* source, char* out, size_t out_size) {
+    FILE* f = fopen("/tmp/test_phase12_sql_src.apx", "w");
     if (f == NULL) return -1;
     fprintf(f, "%s", source);
     fclose(f);
 
-    int rc = system("./bin/mypl /tmp/test_phase12_sql_src.mypl --db /tmp/test_phase12.db"
+    int rc = system("./bin/auspex /tmp/test_phase12_sql_src.apx --db /tmp/test_phase12.db"
                     " > /tmp/test_phase12_sql_out.txt 2>&1");
 
     FILE* outf = fopen("/tmp/test_phase12_sql_out.txt", "r");
@@ -1012,7 +1012,7 @@ static int run_mypl_sqlite(const char* source, char* out, size_t out_size) {
 TEST(phase12_trigger_static_fires) {
     clean_trigger_db();
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "trigger trg_static after insert on trg_s {\n"
         "    print \"static-fired\";\n"
         "}\n"
@@ -1030,7 +1030,7 @@ TEST(phase12_trigger_static_fires) {
 TEST(phase12_trigger_persists_across_restarts) {
     clean_trigger_db();
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "trigger trg_persist after insert on trg_p {\n"
         "    print \"persist-fired\";\n"
         "}\n"
@@ -1045,7 +1045,7 @@ TEST(phase12_trigger_persists_across_restarts) {
 
     /* New process, source no longer declares the trigger: it is reloaded
        from the persisted program units and still fires. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    insert into trg_p values (2);\n"
         "    return 0;\n"
@@ -1059,7 +1059,7 @@ TEST(phase12_trigger_persists_across_restarts) {
 TEST(phase12_drop_trigger_stops_and_persists) {
     clean_trigger_db();
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "trigger trg_drop after insert on trg_d {\n"
         "    print \"drop-fired\";\n"
         "}\n"
@@ -1073,7 +1073,7 @@ TEST(phase12_drop_trigger_stops_and_persists) {
     ASSERT_INT_EQ(1, count_occurrences(out, "drop-fired"));
 
     /* DROP TRIGGER stops firing immediately ... */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    drop trigger trg_drop;\n"
         "    insert into trg_d values (2);\n"
@@ -1084,7 +1084,7 @@ TEST(phase12_drop_trigger_stops_and_persists) {
     ASSERT_INT_EQ(0, count_occurrences(out, "drop-fired"));
 
     /* ... and the trigger stays dropped after a restart. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    insert into trg_d values (3);\n"
         "    return 0;\n"
@@ -1099,7 +1099,7 @@ TEST(phase12_drop_trigger_stops_and_persists) {
 TEST(phase12_sqlite_row_trigger_dml_on_own_table_errors) {
     remove("/tmp/test_phase12.db");
     char out[1024];
-    int rc = run_mypl_sqlite(
+    int rc = run_auspex_sqlite(
         "trigger trg_sq after insert on trg_sq_t for each row {\n"
         "    execute_immediate(\"delete from trg_sq_t\");\n"
         "}\n"
@@ -1120,7 +1120,7 @@ TEST(phase12_sqlite_row_trigger_dml_on_own_table_errors) {
 TEST(phase12_sqlite_row_trigger_error_message_is_reported) {
     remove("/tmp/test_phase12.db");
     char out[1024];
-    int rc = run_mypl_sqlite(
+    int rc = run_auspex_sqlite(
         "trigger trg_sqe before insert on trg_sqe_t for each row {\n"
         "    raise_application_error(-20001, \"negative total\");\n"
         "}\n"
@@ -1138,7 +1138,7 @@ TEST(phase12_sqlite_row_trigger_error_message_is_reported) {
 TEST(phase12_trigger_fires_on_execute_immediate) {
     clean_trigger_db();
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "trigger trg_dyn_pre before insert on trg_dyn {\n"
         "    print \"dyn-before\";\n"
         "}\n"
@@ -1164,7 +1164,7 @@ TEST(phase12_trigger_fires_on_execute_immediate) {
 TEST(phase12_trigger_fires_on_dbms_sql_execute) {
     clean_trigger_db();
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "trigger trg_dsql after insert on trg_ds {\n"
         "    print \"dbmssql-fired\";\n"
         "}\n"
@@ -1182,7 +1182,7 @@ TEST(phase12_trigger_fires_on_dbms_sql_execute) {
 TEST(phase12_drop_trigger_via_execute_immediate) {
     clean_trigger_db();
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "trigger trg_dyndrop after insert on trg_dd {\n"
         "    print \"dyndrop-fired\";\n"
         "}\n"
@@ -1199,7 +1199,7 @@ TEST(phase12_drop_trigger_via_execute_immediate) {
     ASSERT_INT_EQ(1, count_occurrences(out, "dyndrop-fired"));
 
     /* The dynamic drop persists: no firing in a new process. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    insert into trg_dd values (3);\n"
         "    return 0;\n"
@@ -1213,7 +1213,7 @@ TEST(phase12_drop_trigger_via_execute_immediate) {
 TEST(phase12_sqlite_trigger_persists_across_restarts) {
     remove("/tmp/test_phase12_trg.db");
     char out[512];
-    int rc = run_mypl_sqlite(
+    int rc = run_auspex_sqlite(
         "trigger strg_persist after insert on strg_p {\n"
         "    print \"sqlite-persist-fired\";\n"
         "}\n"
@@ -1226,7 +1226,7 @@ TEST(phase12_sqlite_trigger_persists_across_restarts) {
     ASSERT_INT_EQ(0, rc);
     ASSERT_INT_EQ(1, count_occurrences(out, "sqlite-persist-fired"));
 
-    rc = run_mypl_sqlite(
+    rc = run_auspex_sqlite(
         "proc main() -> int {\n"
         "    insert into strg_p values (2);\n"
         "    return 0;\n"
@@ -1240,7 +1240,7 @@ TEST(phase12_sqlite_trigger_persists_across_restarts) {
 TEST(phase12_sqlite_drop_trigger_persists) {
     remove("/tmp/test_phase12_trg.db");
     char out[512];
-    int rc = run_mypl_sqlite(
+    int rc = run_auspex_sqlite(
         "trigger strg_drop after insert on strg_d {\n"
         "    print \"sqlite-drop-fired\";\n"
         "}\n"
@@ -1255,7 +1255,7 @@ TEST(phase12_sqlite_drop_trigger_persists) {
     ASSERT_INT_EQ(0, rc);
     ASSERT_INT_EQ(1, count_occurrences(out, "sqlite-drop-fired"));
 
-    rc = run_mypl_sqlite(
+    rc = run_auspex_sqlite(
         "proc main() -> int {\n"
         "    insert into strg_d values (3);\n"
         "    return 0;\n"
@@ -1269,7 +1269,7 @@ TEST(phase12_sqlite_drop_trigger_persists) {
 TEST(phase12_sqlite_nextval_persists_across_restarts) {
     remove("/tmp/test_phase12.db");
     char out[512];
-    int rc = run_mypl_sqlite(
+    int rc = run_auspex_sqlite(
         "proc main() -> int {\n"
         "    create_sequence(\"sseq\", 200, 25);\n"
         "    print nextval(\"sseq\");\n"
@@ -1283,7 +1283,7 @@ TEST(phase12_sqlite_nextval_persists_across_restarts) {
 
     /* New process against the same SQLite file: currval and nextval
        continue from the persisted state. */
-    rc = run_mypl_sqlite(
+    rc = run_auspex_sqlite(
         "proc main() -> int {\n"
         "    print currval(\"sseq\");\n"
         "    print nextval(\"sseq\");\n"
@@ -1298,7 +1298,7 @@ TEST(phase12_sqlite_nextval_persists_across_restarts) {
 TEST(phase12_sqlite_drop_sequence_persists) {
     remove("/tmp/test_phase12.db");
     char out[512];
-    int rc = run_mypl_sqlite(
+    int rc = run_auspex_sqlite(
         "proc main() -> int {\n"
         "    create_sequence(\"sseq2\", 1, 1);\n"
         "    print nextval(\"sseq2\");\n"
@@ -1308,7 +1308,7 @@ TEST(phase12_sqlite_drop_sequence_persists) {
         out, sizeof(out));
     ASSERT_INT_EQ(0, rc);
 
-    rc = run_mypl_sqlite(
+    rc = run_auspex_sqlite(
         "proc main() -> int {\n"
         "    print nextval(\"sseq2\");\n"
         "    return 0;\n"
@@ -1321,7 +1321,7 @@ TEST(phase12_sqlite_drop_sequence_persists) {
 TEST(phase12_sqlite_row_trigger_insert_fires_per_row) {
     remove("/tmp/test_phase12.db");
     char out[512];
-    int rc = run_mypl_sqlite(
+    int rc = run_auspex_sqlite(
         "trigger strg_r_ins after insert on strg_ri for each row {\n"
         "    print \"s-row-ins\";\n"
         "    print :new.id;\n"
@@ -1344,7 +1344,7 @@ TEST(phase12_sqlite_row_trigger_insert_fires_per_row) {
 TEST(phase12_sqlite_row_trigger_update_and_delete) {
     remove("/tmp/test_phase12.db");
     char out[512];
-    int rc = run_mypl_sqlite(
+    int rc = run_auspex_sqlite(
         "trigger strg_r_upd after update on strg_ru for each row {\n"
         "    print \"s-upd\";\n"
         "    print :old.qty;\n"
@@ -1375,7 +1375,7 @@ TEST(phase12_sqlite_row_trigger_update_and_delete) {
 TEST(phase12_sqlite_row_trigger_persists_across_restarts) {
     remove("/tmp/test_phase12.db");
     char out[512];
-    int rc = run_mypl_sqlite(
+    int rc = run_auspex_sqlite(
         "trigger strg_r_per after insert on strg_rp for each row {\n"
         "    print \"s-row-persist-fired\";\n"
         "    print :new.id;\n"
@@ -1389,7 +1389,7 @@ TEST(phase12_sqlite_row_trigger_persists_across_restarts) {
     ASSERT_INT_EQ(0, rc);
     ASSERT_INT_EQ(1, count_occurrences(out, "s-row-persist-fired"));
 
-    rc = run_mypl_sqlite(
+    rc = run_auspex_sqlite(
         "proc main() -> int {\n"
         "    insert into strg_rp values (2);\n"
         "    return 0;\n"
@@ -1404,7 +1404,7 @@ TEST(phase12_sqlite_row_trigger_persists_across_restarts) {
 TEST(phase12_dbms_sql_sqlite_bind_and_execute) {
     remove("/tmp/test_phase12.db");
     char out[512];
-    int rc = run_mypl_sqlite(
+    int rc = run_auspex_sqlite(
         "proc main() -> int {\n"
         "    create table dbms_t (id int, name string);\n"
         "    int c = dbms_sql.open_cursor();\n"
@@ -1434,7 +1434,7 @@ TEST(phase12_dbms_sql_sqlite_bind_and_execute) {
 TEST(phase12_dbms_sql_sqlite_bind_string_with_quote) {
     remove("/tmp/test_phase12.db");
     char out[512];
-    int rc = run_mypl_sqlite(
+    int rc = run_auspex_sqlite(
         "proc main() -> int {\n"
         "    create table dbms_t (id int, name string);\n"
         "    int c = dbms_sql.open_cursor();\n"
@@ -1467,9 +1467,9 @@ TEST(phase12_dbms_sql_sqlite_bind_string_with_quote) {
  * keep their built-in behavior. */
 
 static void clean_override_db(void) {
-    remove("mypl.db");
-    remove("mypl.db.packages");
-    remove("mypl.db.programs");
+    remove("auspex.db");
+    remove("auspex.db.packages");
+    remove("auspex.db.programs");
 }
 
 TEST(phase12_issue28_user_package_overrides_builtin_dbms_output) {
@@ -1477,7 +1477,7 @@ TEST(phase12_issue28_user_package_overrides_builtin_dbms_output) {
     char out[512];
     /* The user-declared dbms_output replaces the built-in: put_line must
        resolve to the user body, which prints a distinguishable marker. */
-    int rc = run_mypl(
+    int rc = run_auspex(
         "package dbms_output is\n"
         "    proc put_line(s string) -> int;\n"
         "end dbms_output;\n"
@@ -1504,7 +1504,7 @@ TEST(phase12_issue28_non_overridden_builtin_still_works) {
     char out[512];
     /* Only utl_file is overridden here; the built-in dbms_output must keep
        its standard buffered behavior (enable/put_line/get_lines). */
-    int rc = run_mypl(
+    int rc = run_auspex(
         "package utl_file is\n"
         "    proc put_line(handle int, text string) -> int;\n"
         "end utl_file;\n"
@@ -1553,7 +1553,7 @@ TEST(phase12_issue29_utl_file_append_and_fseek) {
     char out[512];
     /* Write 3 lines, append a 4th via "a" (nothing may be truncated), then
        fseek back to 0 and re-read the first line. */
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    int w = utl_file.fopen(\"/tmp/test_phase12_utl_append.txt\", \"w\");\n"
         "    utl_file.put_line(w, \"one\");\n"
@@ -1594,7 +1594,7 @@ TEST(phase12_issue29_utl_file_fflush_makes_line_visible) {
     char out[512];
     /* After put_line + fflush (handle still open, no close), the line must
        be readable from disk through the read_file native. */
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    int w = utl_file.fopen(\"/tmp/test_phase12_utl_flush.txt\", \"w\");\n"
         "    utl_file.put_line(w, \"flushed-line\");\n"
@@ -1614,7 +1614,7 @@ TEST(phase12_issue29_utl_file_many_open_handles) {
     char out[512];
     /* The handle table holds 16 entries today; opening 24 files at once
        must succeed once the table is grown. */
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    array<int> hs;\n"
         "    int i = 0;\n"
@@ -1649,7 +1649,7 @@ TEST(phase12_issue29_utl_file_mkdir_and_remove) {
        a nonzero result. */
     remove("/tmp/test_phase12_utl_dir/f.txt");
     remove("/tmp/test_phase12_utl_dir");
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    int rc = utl_file.mkdir(\"/tmp/test_phase12_utl_dir\");\n"
         "    print concat(\"mkdir:\", int_to_string(rc));\n"
@@ -1697,9 +1697,9 @@ static int build_phase12_shared_lib(void) {
     fprintf(f, "#include <ctype.h>\n");
     fprintf(f, "#include <stdlib.h>\n");
     fprintf(f, "#include <string.h>\n");
-    fprintf(f, "int mypl_double(int x) { return x * 2; }\n");
-    fprintf(f, "double mypl_triple(double x) { return x * 3.0; }\n");
-    fprintf(f, "char* mypl_shout(const char* s) {\n");
+    fprintf(f, "int auspex_double(int x) { return x * 2; }\n");
+    fprintf(f, "double auspex_triple(double x) { return x * 3.0; }\n");
+    fprintf(f, "char* auspex_shout(const char* s) {\n");
     fprintf(f, "    size_t n = strlen(s);\n");
     fprintf(f, "    char* out = malloc(n + 1);\n");
     fprintf(f, "    if (out == NULL) return NULL;\n");
@@ -1716,13 +1716,13 @@ static int build_phase12_shared_lib(void) {
 TEST(phase12_issue30_external_call_float_and_string) {
     ASSERT_INT_EQ(1, build_phase12_shared_lib());
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
-        "    float rf = external_call_float(\"/tmp/test_phase12_ac_ext.so\", \"mypl_triple\", 1.5);\n"
+        "    float rf = external_call_float(\"/tmp/test_phase12_ac_ext.so\", \"auspex_triple\", 1.5);\n"
         "    print concat(\"float:\", float_to_string(rf));\n"
-        "    string rs = external_call_string(\"/tmp/test_phase12_ac_ext.so\", \"mypl_shout\", \"hello\");\n"
+        "    string rs = external_call_string(\"/tmp/test_phase12_ac_ext.so\", \"auspex_shout\", \"hello\");\n"
         "    print concat(\"string:\", rs);\n"
-        "    int ri = external_call(\"/tmp/test_phase12_ac_ext.so\", \"mypl_double\", 21);\n"
+        "    int ri = external_call(\"/tmp/test_phase12_ac_ext.so\", \"auspex_double\", 21);\n"
         "    print concat(\"int:\", int_to_string(ri));\n"
         "    return 0;\n"
         "}\n",
@@ -1745,7 +1745,7 @@ TEST(phase12_utl_file_get_line_reads_long_lines) {
     fclose(f);
 
     char out[1024];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    int r = utl_file.fopen(\"/tmp/test_phase12_utl_long.txt\", \"r\");\n"
         "    string first = utl_file.get_line(r);\n"
@@ -1772,7 +1772,7 @@ TEST(phase12_utl_file_get_line_raises_no_data_found_at_eof) {
     fclose(f);
 
     char out[1024];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    int r = utl_file.fopen(\"/tmp/test_phase12_utl_eof.txt\", \"r\");\n"
         "    int count = 0;\n"
@@ -1804,7 +1804,7 @@ TEST(phase12_utl_file_get_line_raises_no_data_found_at_eof) {
 
 TEST(phase12_utl_file_get_line_rejects_bad_handles) {
     char out[1024];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    string s = utl_file.get_line(12);\n"
         "    return 0;\n"
@@ -1817,7 +1817,7 @@ TEST(phase12_utl_file_get_line_rejects_bad_handles) {
 TEST(phase12_utl_file_seek_append_and_flush) {
     remove("/tmp/test_phase12_utl_file.txt");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    int w = utl_file.fopen(\"/tmp/test_phase12_utl_file.txt\", \"w\");\n"
         "    utl_file.put_line(w, \"one\");\n"
@@ -1845,7 +1845,7 @@ TEST(phase12_utl_file_seek_append_and_flush) {
 TEST(phase12_utl_file_many_open_handles) {
     remove("/tmp/test_phase12_utl_many.txt");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    array<int> handles;\n"
         "    int i = 0;\n"
@@ -1868,7 +1868,7 @@ TEST(phase12_utl_file_directory_operations) {
     remove("/tmp/test_phase12_utl_dir/file.txt");
     remove("/tmp/test_phase12_utl_dir");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    print int_to_string(utl_file.mkdir(\"/tmp/test_phase12_utl_dir\"));\n"
         "    int h = utl_file.fopen(\"/tmp/test_phase12_utl_dir/file.txt\", \"w\");\n"

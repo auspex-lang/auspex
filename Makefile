@@ -30,7 +30,7 @@ endif
 OBJECTS     = $(patsubst $(SRCDIR)/%.c,$(OBJDIR)/%.o,$(SOURCES))
 LIB_OBJECTS = $(filter-out $(OBJDIR)/main.o,$(OBJECTS))
 
-TARGET      = $(BINDIR)/mypl$(EXE)
+TARGET      = $(BINDIR)/auspex$(EXE)
 
 .PHONY: all clean test examples-test fuzz fuzz-run fuzz-replay install uninstall
 
@@ -75,6 +75,7 @@ test: $(TARGET)
 	$(CC) $(CFLAGS) -Itests -o $(BINDIR)/test_phase12 tests/test_phase12.c $(LIB_OBJECTS) $(LDFLAGS)
 	$(CC) $(CFLAGS) -Itests -o $(BINDIR)/test_phase13 tests/test_phase13.c $(LIB_OBJECTS) $(LDFLAGS)
 	$(CC) $(CFLAGS) -Itests -o $(BINDIR)/test_packages tests/test_packages.c $(LIB_OBJECTS) $(LDFLAGS)
+	$(CC) $(CFLAGS) -Itests -o $(BINDIR)/test_rename_compat tests/test_rename_compat.c $(LIB_OBJECTS) $(LDFLAGS)
 ifeq ($(USE_SQLITE),1)
 	$(CC) $(CFLAGS) -Itests -o $(BINDIR)/test_phase1 tests/test_phase1.c $(LIB_OBJECTS) $(LDFLAGS)
 	$(CC) $(CFLAGS) -Itests -o $(BINDIR)/test_phase8 tests/test_phase8.c $(LIB_OBJECTS) $(LDFLAGS)
@@ -110,6 +111,7 @@ endif
 	$(BINDIR)/test_phase12
 	$(BINDIR)/test_phase13
 	$(BINDIR)/test_packages
+	$(BINDIR)/test_rename_compat
 ifeq ($(USE_SQLITE),1)
 	$(BINDIR)/test_phase1
 	$(BINDIR)/test_phase8
@@ -119,7 +121,7 @@ endif
 	$(MAKE) --no-print-directory fuzz-replay
 	$(MAKE) --no-print-directory examples-test
 
-# Run every runnable example (examples/*.mypl and examples/phases/*.mypl) and
+# Run every runnable example (examples/*.apx and examples/phases/*.apx) and
 # require exit 0; see tests/run_examples.sh for
 # the `// smoke:` directives an example can use (arguments, setup, skips).
 examples-test: $(TARGET)
@@ -173,10 +175,12 @@ DESTDIR    ?=
 INSTALLBIN = $(DESTDIR)$(PREFIX)/bin
 INSTALLMAN = $(DESTDIR)$(PREFIX)/share/man/man1
 
-install: $(TARGET) mypl.1
+# `mypl` stays as a symlink for MyPL users until v0.4.0.
+install: $(TARGET) auspex.1
 	mkdir -p $(INSTALLBIN) $(INSTALLMAN)
-	cp $(TARGET) $(INSTALLBIN)/mypl
-	cp mypl.1 $(INSTALLMAN)/mypl.1
+	cp $(TARGET) $(INSTALLBIN)/auspex
+	ln -sf auspex $(INSTALLBIN)/mypl
+	cp auspex.1 $(INSTALLMAN)/auspex.1
 
 uninstall:
-	rm -f $(INSTALLBIN)/mypl $(INSTALLMAN)/mypl.1
+	rm -f $(INSTALLBIN)/auspex $(INSTALLBIN)/mypl $(INSTALLMAN)/auspex.1

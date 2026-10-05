@@ -1,7 +1,7 @@
 // Phase 12: persistent sequences.
 //
 // Sequences created with create_sequence are stored in the database catalog
-// (custom engine: V5 catalog page; SQLite: _mypl_sequences table), so they
+// (custom engine: V5 catalog page; SQLite: _auspex_sequences table), so they
 // survive process restarts — running this example twice continues the
 // sequence instead of starting over.
 proc main() -> int {
