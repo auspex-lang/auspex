@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/LPuehringerStudent/MyPL/actions/workflows/main.yml"><img src="https://github.com/LPuehringerStudent/MyPL/actions/workflows/main.yml/badge.svg" alt="Tests"></a>
-  <a href="https://github.com/LPuehringerStudent/MyPL/actions/workflows/windows.yml"><img src="https://github.com/LPuehringerStudent/MyPL/actions/workflows/windows.yml/badge.svg" alt="Windows CI"></a>
+  <a href="https://github.com/auspex-lang/auspex/actions/workflows/main.yml"><img src="https://github.com/auspex-lang/auspex/actions/workflows/main.yml/badge.svg" alt="Tests"></a>
+  <a href="https://github.com/auspex-lang/auspex/actions/workflows/windows.yml"><img src="https://github.com/auspex-lang/auspex/actions/workflows/windows.yml/badge.svg" alt="Windows CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/platform-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-blue.svg" alt="Platforms: Linux, macOS, Windows">
 </p>
@@ -32,8 +32,8 @@ proc list_todos() -> int {
 ## Quick start
 
 ```bash
-git clone https://github.com/LPuehringerStudent/MyPL.git
-cd MyPL
+git clone https://github.com/auspex-lang/auspex.git
+cd auspex
 make
 ./bin/auspex examples/todo.apx --db :memory:
 ```

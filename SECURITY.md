@@ -4,7 +4,7 @@
 
 Please do **not** open a public issue for security reports. Instead:
 
-1. Open a [GitHub security advisory](https://github.com/LPuehringerStudent/MyPL/security/advisories/new),
+1. Open a [GitHub security advisory](https://github.com/auspex-lang/auspex/security/advisories/new),
    or
 2. contact the maintainer privately via GitHub direct message.
 
