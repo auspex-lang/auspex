@@ -25,8 +25,8 @@ started, what we expect from patches, and how the workflow looks.
 ## Getting set up
 
 ```bash
-git clone https://github.com/LPuehringerStudent/MyPL.git
-cd MyPL
+git clone https://github.com/auspex-lang/auspex.git
+cd auspex
 make clean && make && make test
 ```
 
