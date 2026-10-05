@@ -2,17 +2,17 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int run_mypl(const char* source, const char* args, char* out, size_t out_size) {
-    FILE* f = fopen("/tmp/test_phase2_src.mypl", "w");
+static int run_auspex(const char* source, const char* args, char* out, size_t out_size) {
+    FILE* f = fopen("/tmp/test_phase2_src.apx", "w");
     if (f == NULL) return -1;
     fprintf(f, "%s", source);
     fclose(f);
 
     char cmd[1024];
     if (args != NULL) {
-        snprintf(cmd, sizeof(cmd), "./bin/mypl /tmp/test_phase2_src.mypl %s > /tmp/test_phase2_out.txt 2>&1", args);
+        snprintf(cmd, sizeof(cmd), "./bin/auspex /tmp/test_phase2_src.apx %s > /tmp/test_phase2_out.txt 2>&1", args);
     } else {
-        snprintf(cmd, sizeof(cmd), "./bin/mypl /tmp/test_phase2_src.mypl > /tmp/test_phase2_out.txt 2>&1");
+        snprintf(cmd, sizeof(cmd), "./bin/auspex /tmp/test_phase2_src.apx > /tmp/test_phase2_out.txt 2>&1");
     }
     int rc = system(cmd);
 
@@ -28,7 +28,7 @@ static int run_mypl(const char* source, const char* args, char* out, size_t out_
 
 TEST(phase2_case_statement_selects_branch) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    int x = 2;\n"
         "    case x {\n"
@@ -45,7 +45,7 @@ TEST(phase2_case_statement_selects_branch) {
 
 TEST(phase2_case_statement_uses_else) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    int x = 99;\n"
         "    case x {\n"
@@ -62,7 +62,7 @@ TEST(phase2_case_statement_uses_else) {
 
 TEST(phase2_case_statement_works_with_strings) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    string s = \"b\";\n"
         "    case s {\n"
@@ -79,7 +79,7 @@ TEST(phase2_case_statement_works_with_strings) {
 
 TEST(phase2_case_statement_rejects_mismatched_value_type) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    int x = 1;\n"
         "    case x {\n"
@@ -94,7 +94,7 @@ TEST(phase2_case_statement_rejects_mismatched_value_type) {
 
 TEST(phase2_anonymous_block_runs_top_level_statements) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "block {\n"
         "    int x = 42;\n"
         "    print int_to_string(x);\n"
@@ -106,7 +106,7 @@ TEST(phase2_anonymous_block_runs_top_level_statements) {
 
 TEST(phase2_func_is_callable_from_expression) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "func add(a int, b int) -> int { return a + b; }\n"
         "proc main() -> int { return add(1, 2); }\n",
         NULL, out, sizeof(out));
@@ -116,7 +116,7 @@ TEST(phase2_func_is_callable_from_expression) {
 
 TEST(phase2_func_returns_string) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "func greet() -> string { return \"hello\"; }\n"
         "proc main() -> int { print greet(); return 0; }\n",
         NULL, out, sizeof(out));
@@ -126,7 +126,7 @@ TEST(phase2_func_returns_string) {
 
 TEST(phase2_func_returns_float) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "func half(x float) -> float { return x / 2.0; }\n"
         "proc main() -> int { print float_to_string(half(4.0)); return 0; }\n",
         NULL, out, sizeof(out));
@@ -136,7 +136,7 @@ TEST(phase2_func_returns_float) {
 
 TEST(phase2_func_used_in_expression) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "func square(n int) -> int { return n * n; }\n"
         "proc main() -> int { print int_to_string(square(3) + square(4)); return 0; }\n",
         NULL, out, sizeof(out));
@@ -146,7 +146,7 @@ TEST(phase2_func_used_in_expression) {
 
 TEST(phase2_out_param_returns_value) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc get_answer(x out int) -> int { x = 42; return 0; }\n"
         "proc main() -> int {\n"
         "    int n = 0;\n"
@@ -161,7 +161,7 @@ TEST(phase2_out_param_returns_value) {
 
 TEST(phase2_inout_param_doubles_value) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc double_it(x in out int) -> int { x = x * 2; return 0; }\n"
         "proc main() -> int {\n"
         "    int n = 21;\n"
@@ -176,7 +176,7 @@ TEST(phase2_inout_param_doubles_value) {
 
 TEST(phase2_mixed_param_modes) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc combine(a int, b in out int, c out int) -> int { b = b + a; c = b * 2; return 0; }\n"
         "proc main() -> int {\n"
         "    int x = 10;\n"
@@ -194,7 +194,7 @@ TEST(phase2_mixed_param_modes) {
 
 TEST(phase2_out_param_rejects_literal_argument) {
     char out[256];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc set_it(x out int) -> int { x = 1; return 0; }\n"
         "proc main() -> int {\n"
         "    set_it(42);\n"

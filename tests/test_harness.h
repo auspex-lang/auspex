@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The suites drive bin/mypl, the shell and the file system through POSIX
+/* The suites drive bin/auspex, the shell and the file system through POSIX
    conventions: shell command lines passed to system(), exit statuses read
    with WEXITSTATUS, files under /tmp. On Windows (MinGW-w64 under MSYS2)
    the same tests run unchanged: system() goes to MSYS2's bash rather than

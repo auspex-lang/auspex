@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/hero.svg" alt="MyPL — a lightweight, open-source alternative to PL/SQL" width="860">
+  <img src="assets/hero.svg" alt="Auspex — a lightweight, open-source alternative to PL/SQL" width="860">
 </p>
 
 <p align="center">
@@ -9,12 +9,13 @@
   <img src="https://img.shields.io/badge/platform-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-blue.svg" alt="Platforms: Linux, macOS, Windows">
 </p>
 
-MyPL is a small scripting language with C-like syntax and SQL in its veins.
+Auspex (*AW-speks*, formerly MyPL) is a small scripting language with C-like
+syntax and SQL in its veins.
 It compiles to bytecode for a custom stack VM and runs against either its
 built-in SQL engine or SQLite. Stored-procedure scripting without the weight
 of an Oracle installation.
 
-```mypl
+```auspex
 proc add_todo(title string) -> int {
     insert into todos (title, done) values (?title, 0);
     return 0;
@@ -34,7 +35,7 @@ proc list_todos() -> int {
 git clone https://github.com/LPuehringerStudent/MyPL.git
 cd MyPL
 make
-./bin/mypl examples/todo.mypl --db :memory:
+./bin/auspex examples/todo.apx --db :memory:
 ```
 
 ## Highlights
@@ -67,7 +68,7 @@ Full documentation lives in [`docs/`](docs/):
 - [`docs/language.md`](docs/language.md) — the language, top to bottom
 - [`docs/engines.md`](docs/engines.md) — the two SQL backends and their limits
 - [`docs/examples.md`](docs/examples.md) — guided tour of the runnable examples
-- `mypl.1` — man page (build, CLI, REPL)
+- `auspex.1` — man page (build, CLI, REPL)
 
 ## Build
 
@@ -93,6 +94,19 @@ make clean && make && make test
 
 The Windows REPL uses the console API for history and in-line editing;
 piped input falls back to plain line reading.
+
+## Migrating from MyPL
+
+Auspex was called MyPL up to v0.1.0. Everything MyPL wrote keeps working
+through v0.3.x, with a one-line warning on stderr where a legacy name is used:
+
+| MyPL | Auspex | Until v0.4.0 |
+| --- | --- | --- |
+| `mypl` binary | `auspex` | `make install` also installs a `mypl` symlink |
+| `.mypl` sources | `.apx` | `.mypl` files still run (the extension is never checked) |
+| `mypl.db` (+ `.packages`/`.programs`) | `auspex.db` | used when only `mypl.db` exists; rename all three files to switch |
+| `_mypl_*` tables (SQLite) | `_auspex_*` | renamed automatically the first time the database is opened |
+| `MYPL_INDEX_DEBUG` | `AUSPEX_INDEX_DEBUG` | still read |
 
 ## Contributing
 

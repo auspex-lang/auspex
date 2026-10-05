@@ -10,8 +10,8 @@ typedef struct RowObj RowObj;
 typedef struct CursorObj CursorObj;
 typedef struct DBDriver DBDriver;
 
-#define MYPL_CC_MAX_FLAGS 64
-#define MYPL_CC_FLAG_NAME_MAX 64
+#define AUSPEX_CC_MAX_FLAGS 64
+#define AUSPEX_CC_FLAG_NAME_MAX 64
 
 typedef struct {
     const char* const* conditional_flags;

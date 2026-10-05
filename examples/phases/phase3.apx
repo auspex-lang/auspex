@@ -1,5 +1,5 @@
 // Phase 3 demo: explicit cursor variables with open/fetch/close and attributes.
-// Run with: ./bin/mypl examples/phase3.mypl
+// Run with: ./bin/auspex examples/phase3.apx
 
 proc main() -> int {
     create table products (id int, name string, price int);

@@ -424,11 +424,11 @@ TEST(parser_parses_select_into_array_row) {
 }
 
 TEST(parser_parses_import_statement) {
-    Program* program = parse("import \"foo.mypl\"; proc main() -> int { return 0; }", NULL, 0);
+    Program* program = parse("import \"foo.apx\"; proc main() -> int { return 0; }", NULL, 0);
     ASSERT_PTR_NOT_NULL(program);
     ASSERT_INT_EQ(1, program->import_count);
     ASSERT_INT_EQ(STMT_IMPORT, program->imports[0]->kind);
-    ASSERT_STRING_EQ("foo.mypl", program->imports[0]->as.import_stmt.path);
+    ASSERT_STRING_EQ("foo.apx", program->imports[0]->as.import_stmt.path);
     free_program(program);
 }
 

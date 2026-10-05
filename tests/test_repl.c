@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* `args` go on the mypl command line, e.g. "--db /tmp/x.db"; "" for none. */
+/* `args` go on the auspex command line, e.g. "--db /tmp/x.db"; "" for none. */
 static int run_repl_with_args(const char* args, const char* input,
                               char* output, size_t output_size) {
     FILE* in = fopen("/tmp/repl_in.txt", "w");
@@ -16,7 +16,7 @@ static int run_repl_with_args(const char* args, const char* input,
 
     char command[512];
     snprintf(command, sizeof(command),
-             "./bin/mypl %s < /tmp/repl_in.txt > /tmp/repl_out.txt 2>&1", args);
+             "./bin/auspex %s < /tmp/repl_in.txt > /tmp/repl_out.txt 2>&1", args);
     int rc = system(command);
     FILE* f = fopen("/tmp/repl_out.txt", "r");
     if (f == NULL) {
@@ -57,13 +57,13 @@ TEST(repl_inspects_variables) {
 }
 
 TEST(repl_loads_file) {
-    FILE* f = fopen("/tmp/repl_load_test.mypl", "w");
+    FILE* f = fopen("/tmp/repl_load_test.apx", "w");
     ASSERT_PTR_NOT_NULL(f);
     fprintf(f, "proc triple(n int) -> int { return n * 3; }\n");
     fclose(f);
 
     char out[4096];
-    run_repl(".load /tmp/repl_load_test.mypl\ntriple(7)\n.exit\n",
+    run_repl(".load /tmp/repl_load_test.apx\ntriple(7)\n.exit\n",
              out, sizeof(out));
     ASSERT_INT_EQ(1, output_contains(out, "21"));
 }
@@ -306,19 +306,19 @@ TEST(repl_vars_names_follow_their_slots) {
 }
 
 TEST(repl_load_failure_does_not_poison_session) {
-    FILE* f = fopen("/tmp/repl_load_bad.mypl", "w");
+    FILE* f = fopen("/tmp/repl_load_bad.apx", "w");
     ASSERT_PTR_NOT_NULL(f);
     fprintf(f, "proc bad(n int) -> int { return missing_name; }\n");
     fclose(f);
-    f = fopen("/tmp/repl_load_main.mypl", "w");
+    f = fopen("/tmp/repl_load_main.apx", "w");
     ASSERT_PTR_NOT_NULL(f);
     fprintf(f, "proc helper(n int) -> int { return n + 100; }\n"
                "proc main() -> int { print \"file main\"; return 0; }\n");
     fclose(f);
 
     char out[4096];
-    run_repl(".load /tmp/repl_load_bad.mypl\n"
-             ".load /tmp/repl_load_main.mypl\n"
+    run_repl(".load /tmp/repl_load_bad.apx\n"
+             ".load /tmp/repl_load_main.apx\n"
              "helper(1)\n"
              "int after = 3;\n"
              "after + 1\n"
@@ -373,16 +373,16 @@ static void check_persisted_sessions(const char* args) {
 }
 
 TEST(repl_persisted_packages_load_in_later_sessions) {
-    remove("mypl.db");
-    remove("mypl.db.packages");
+    remove("auspex.db");
+    remove("auspex.db.packages");
     check_persisted_sessions("");
     if (current_test_failed) {
-        remove("mypl.db");
-        remove("mypl.db.packages");
+        remove("auspex.db");
+        remove("auspex.db.packages");
         return;
     }
     /* The stored source holds each definition once, under one marker. */
-    FILE* f = fopen("mypl.db.packages", "r");
+    FILE* f = fopen("auspex.db.packages", "r");
     ASSERT_PTR_NOT_NULL(f);
     char stored[4096];
     size_t n = fread(stored, 1, sizeof(stored) - 1, f);
@@ -391,9 +391,9 @@ TEST(repl_persisted_packages_load_in_later_sessions) {
     ASSERT_INT_EQ(1, count_occurrences(stored, "proc add"));
     ASSERT_INT_EQ(1, count_occurrences(stored, "return a * b;"));
     ASSERT_INT_EQ(1, count_occurrences(stored, "package body p1"));
-    ASSERT_INT_EQ(1, count_occurrences(stored, "__MYPL_PACKAGE_SOURCE__"));
-    remove("mypl.db");
-    remove("mypl.db.packages");
+    ASSERT_INT_EQ(1, count_occurrences(stored, "__AUSPEX_PACKAGE_SOURCE__"));
+    remove("auspex.db");
+    remove("auspex.db.packages");
 }
 
 #ifdef USE_SQLITE
@@ -425,7 +425,7 @@ TEST(repl_lists_indexes_and_foreign_keys_in_sqlite) {
 int main(void) {
     /* Stored package source from an earlier run would be loaded by every
        session, so it goes too. */
-    system("rm -f mypl.db mypl.db.packages");
+    system("rm -f auspex.db auspex.db.packages");
     RUN_TEST(repl_defines_and_calls_procedure);
     RUN_TEST(repl_persists_variables);
     RUN_TEST(repl_inspects_variables);

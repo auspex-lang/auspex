@@ -8,7 +8,7 @@
 #include "natives.h"
 #include "vm.h"
 
-#define TEST_PATH "/tmp/mypl_test_file_io.txt"
+#define TEST_PATH "/tmp/auspex_test_file_io.txt"
 
 TEST(file_io_write_file_returns_success_and_creates_file) {
     unlink(TEST_PATH);

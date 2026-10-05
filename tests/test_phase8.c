@@ -10,17 +10,17 @@
 #include "stored_programs.h"
 #endif
 
-static int run_mypl(const char* source, const char* args, char* out, size_t out_size) {
-    FILE* f = fopen("/tmp/test_phase8_src.mypl", "w");
+static int run_auspex(const char* source, const char* args, char* out, size_t out_size) {
+    FILE* f = fopen("/tmp/test_phase8_src.apx", "w");
     if (f == NULL) return -1;
     fprintf(f, "%s", source);
     fclose(f);
 
     char cmd[1024];
     if (args != NULL) {
-        snprintf(cmd, sizeof(cmd), "./bin/mypl /tmp/test_phase8_src.mypl %s > /tmp/test_phase8_out.txt 2>&1", args);
+        snprintf(cmd, sizeof(cmd), "./bin/auspex /tmp/test_phase8_src.apx %s > /tmp/test_phase8_out.txt 2>&1", args);
     } else {
-        snprintf(cmd, sizeof(cmd), "./bin/mypl /tmp/test_phase8_src.mypl > /tmp/test_phase8_out.txt 2>&1");
+        snprintf(cmd, sizeof(cmd), "./bin/auspex /tmp/test_phase8_src.apx > /tmp/test_phase8_out.txt 2>&1");
     }
     int rc = system(cmd);
 
@@ -41,14 +41,14 @@ TEST(phase8_stored_proc_persists_across_runs_sqlite) {
     char args[256];
     snprintf(args, sizeof(args), "--db %s", db);
 
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc add(a int, b int) -> int { return a + b; }\n"
         "proc main() -> int { return add(2, 3); }\n",
         args, out, sizeof(out));
     ASSERT_INT_EQ(0, rc);
     ASSERT_INT_EQ(1, strstr(out, "5") != NULL);
 
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int { return add(10, 20); }\n",
         args, out, sizeof(out));
     ASSERT_INT_EQ(0, rc);
@@ -62,14 +62,14 @@ TEST(phase8_stored_func_persists_across_runs_sqlite) {
     char args[256];
     snprintf(args, sizeof(args), "--db %s", db);
 
-    int rc = run_mypl(
+    int rc = run_auspex(
         "func double(x int) -> int { return x * 2; }\n"
         "proc main() -> int { return double(7); }\n",
         args, out, sizeof(out));
     ASSERT_INT_EQ(0, rc);
     ASSERT_INT_EQ(1, strstr(out, "14") != NULL);
 
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int { return double(5); }\n",
         args, out, sizeof(out));
     ASSERT_INT_EQ(0, rc);
@@ -83,14 +83,14 @@ TEST(phase8_proc_main_is_not_persisted) {
     char args[256];
     snprintf(args, sizeof(args), "--db %s", db);
 
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc helper() -> int { return 99; }\n"
         "proc main() -> int { return helper(); }\n",
         args, out, sizeof(out));
     ASSERT_INT_EQ(0, rc);
     ASSERT_INT_EQ(1, strstr(out, "99") != NULL);
 
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int { return helper(); }\n",
         args, out, sizeof(out));
     ASSERT_INT_EQ(0, rc);
@@ -114,7 +114,7 @@ TEST(phase8_authid_definer_is_stored_and_stripped) {
     sqlite3* dbh = ((SQLiteImpl*)driver.impl)->db;
     sqlite3_stmt* stmt = NULL;
     if (sqlite3_prepare_v2(dbh,
-                           "SELECT authid FROM _mypl_program_units "
+                           "SELECT authid FROM _auspex_program_units "
                            "WHERE name = 'secret' AND unit_type = 'FUNCTION'",
                            -1, &stmt, NULL) != SQLITE_OK) {
         driver.close(&driver);
@@ -147,7 +147,7 @@ TEST(phase8_savepoint_rollback_to_sqlite) {
     char args[256];
     snprintf(args, sizeof(args), "--db %s", db);
 
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table t (id int);\n"
         "    begin;\n"
@@ -173,7 +173,7 @@ TEST(phase8_savepoint_release_sqlite) {
     char args[256];
     snprintf(args, sizeof(args), "--db %s", db);
 
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table t (id int);\n"
         "    begin;\n"
@@ -199,7 +199,7 @@ TEST(phase8_rollback_to_name_sqlite) {
     char args[256];
     snprintf(args, sizeof(args), "--db %s", db);
 
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table t (id int);\n"
         "    begin;\n"
@@ -231,7 +231,7 @@ TEST(phase8_autonomous_proc_commits_independently) {
      * call the autonomous procedure before the caller performs its own write;
      * the semantics remain the same: the autonomous work commits independently
      * and the caller's rollback undoes only the caller's write. */
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc auto_insert() -> int {\n"
         "    pragma autonomous_transaction;\n"
         "    insert into t values (2);\n"
@@ -260,7 +260,7 @@ TEST(phase8_autonomous_proc_error_does_not_affect_caller) {
     char args[256];
     snprintf(args, sizeof(args), "--db %s", db);
 
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc auto_insert_and_raise() -> int {\n"
         "    pragma autonomous_transaction;\n"
         "    my_error exception;\n"
@@ -287,18 +287,18 @@ TEST(phase8_autonomous_proc_error_does_not_affect_caller) {
 }
 
 TEST(phase8_stored_func_persists_across_runs_custom) {
-    unlink("mypl.db");
-    unlink("mypl.db.programs");
+    unlink("auspex.db");
+    unlink("auspex.db.programs");
     char out[256];
 
-    int rc = run_mypl(
+    int rc = run_auspex(
         "func double(x int) -> int { return x * 2; }\n"
         "proc main() -> int { return double(7); }\n",
         NULL, out, sizeof(out));
     ASSERT_INT_EQ(0, rc);
     ASSERT_INT_EQ(1, strstr(out, "14") != NULL);
 
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int { return double(5); }\n",
         NULL, out, sizeof(out));
     ASSERT_INT_EQ(0, rc);
@@ -306,18 +306,18 @@ TEST(phase8_stored_func_persists_across_runs_custom) {
 }
 
 TEST(phase8_update_upserts_existing_unit_custom) {
-    unlink("mypl.db");
-    unlink("mypl.db.programs");
+    unlink("auspex.db");
+    unlink("auspex.db.programs");
     char out[256];
 
-    int rc = run_mypl(
+    int rc = run_auspex(
         "func answer() -> int { return 1; }\n"
         "proc main() -> int { return answer(); }\n",
         NULL, out, sizeof(out));
     ASSERT_INT_EQ(0, rc);
     ASSERT_INT_EQ(1, strstr(out, "1") != NULL);
 
-    rc = run_mypl(
+    rc = run_auspex(
         "func answer() -> int { return 2; }\n"
         "proc main() -> int { return answer(); }\n",
         NULL, out, sizeof(out));
@@ -326,11 +326,11 @@ TEST(phase8_update_upserts_existing_unit_custom) {
 }
 
 TEST(phase8_package_boundary_excluded_custom) {
-    unlink("mypl.db");
-    unlink("mypl.db.programs");
+    unlink("auspex.db");
+    unlink("auspex.db.programs");
     char out[256];
 
-    int rc = run_mypl(
+    int rc = run_auspex(
         "package body math_pkg is\n"
         "  func hidden(x int) -> int { return x * 2; }\n"
         "end math_pkg;\n"
@@ -339,18 +339,18 @@ TEST(phase8_package_boundary_excluded_custom) {
     ASSERT_INT_EQ(0, rc);
     ASSERT_INT_EQ(1, strstr(out, "42") != NULL);
 
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int { return hidden(3); }\n",
         NULL, out, sizeof(out));
     ASSERT_INT_EQ(1, rc);
 }
 
 TEST(phase8_complex_body_persists_custom) {
-    unlink("mypl.db");
-    unlink("mypl.db.programs");
+    unlink("auspex.db");
+    unlink("auspex.db.programs");
     char out[256];
 
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc complex(n int) -> int {\n"
         "  // { this is a comment with braces }\n"
         "  string s = \"proc func inside string { }\";\n"
@@ -364,7 +364,7 @@ TEST(phase8_complex_body_persists_custom) {
     ASSERT_INT_EQ(0, rc);
     ASSERT_INT_EQ(1, strstr(out, "14") != NULL);
 
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int { return complex(3); }\n",
         NULL, out, sizeof(out));
     ASSERT_INT_EQ(0, rc);
@@ -372,11 +372,11 @@ TEST(phase8_complex_body_persists_custom) {
 }
 
 TEST(phase8_autonomous_proc_custom_engine_runs) {
-    unlink("mypl.db");
-    unlink("mypl.db.programs");
+    unlink("auspex.db");
+    unlink("auspex.db.programs");
     char out[256];
 
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc auto_add(x int) -> int {\n"
         "    pragma autonomous_transaction;\n"
         "    return x + 1;\n"
@@ -388,11 +388,11 @@ TEST(phase8_autonomous_proc_custom_engine_runs) {
 }
 
 TEST(phase8_proc_authid_definer_compiles_and_runs) {
-    unlink("mypl.db");
-    unlink("mypl.db.programs");
+    unlink("auspex.db");
+    unlink("auspex.db.programs");
     char out[256];
 
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc add(a int, b int) -> int authid definer { return a + b; }\n"
         "proc main() -> int { return add(2, 3); }\n",
         NULL, out, sizeof(out));
@@ -401,11 +401,11 @@ TEST(phase8_proc_authid_definer_compiles_and_runs) {
 }
 
 TEST(phase8_func_authid_current_user_compiles_and_runs) {
-    unlink("mypl.db");
-    unlink("mypl.db.programs");
+    unlink("auspex.db");
+    unlink("auspex.db.programs");
     char out[256];
 
-    int rc = run_mypl(
+    int rc = run_auspex(
         "func double(x int) -> int authid current_user { return x * 2; }\n"
         "proc main() -> int { return double(7); }\n",
         NULL, out, sizeof(out));
@@ -414,11 +414,11 @@ TEST(phase8_func_authid_current_user_compiles_and_runs) {
 }
 
 TEST(phase8_package_authid_compiles_and_runs) {
-    unlink("mypl.db");
-    unlink("mypl.db.programs");
+    unlink("auspex.db");
+    unlink("auspex.db.programs");
     char out[256];
 
-    int rc = run_mypl(
+    int rc = run_auspex(
         "package math_pkg is\n"
         "  func answer() -> int authid current_user;\n"
         "end math_pkg;\n"
@@ -433,11 +433,11 @@ TEST(phase8_package_authid_compiles_and_runs) {
 }
 
 TEST(phase8_proc_authid_missing_value_errors) {
-    unlink("mypl.db");
-    unlink("mypl.db.programs");
+    unlink("auspex.db");
+    unlink("auspex.db.programs");
     char out[256];
 
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc bad() -> int authid { return 0; }\n"
         "proc main() -> int { return bad(); }\n",
         NULL, out, sizeof(out));

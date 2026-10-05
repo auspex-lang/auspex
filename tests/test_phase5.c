@@ -2,17 +2,17 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int run_mypl(const char* source, const char* args, char* out, size_t out_size) {
-    FILE* f = fopen("/tmp/test_phase5_src.mypl", "w");
+static int run_auspex(const char* source, const char* args, char* out, size_t out_size) {
+    FILE* f = fopen("/tmp/test_phase5_src.apx", "w");
     if (f == NULL) return -1;
     fprintf(f, "%s", source);
     fclose(f);
 
     char cmd[1024];
     if (args != NULL) {
-        snprintf(cmd, sizeof(cmd), "./bin/mypl /tmp/test_phase5_src.mypl %s > /tmp/test_phase5_out.txt 2>&1", args);
+        snprintf(cmd, sizeof(cmd), "./bin/auspex /tmp/test_phase5_src.apx %s > /tmp/test_phase5_out.txt 2>&1", args);
     } else {
-        snprintf(cmd, sizeof(cmd), "./bin/mypl /tmp/test_phase5_src.mypl > /tmp/test_phase5_out.txt 2>&1");
+        snprintf(cmd, sizeof(cmd), "./bin/auspex /tmp/test_phase5_src.apx > /tmp/test_phase5_out.txt 2>&1");
     }
     int rc = system(cmd);
 
@@ -28,7 +28,7 @@ static int run_mypl(const char* source, const char* args, char* out, size_t out_
 
 TEST(phase5_user_defined_exception_raise) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    my_error exception;\n"
         "    try {\n"
@@ -47,7 +47,7 @@ TEST(phase5_user_defined_exception_raise) {
 
 TEST(phase5_raise_application_error) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    try {\n"
         "        raise_application_error(-20001, \"custom business error\");\n"
@@ -66,7 +66,7 @@ TEST(phase5_raise_application_error) {
 
 TEST(phase5_predefined_no_data_found) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    try {\n"
         "        raise no_data_found;\n"
@@ -82,7 +82,7 @@ TEST(phase5_predefined_no_data_found) {
 
 TEST(phase5_predefined_too_many_rows) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    try {\n"
         "        raise too_many_rows;\n"
@@ -97,10 +97,10 @@ TEST(phase5_predefined_too_many_rows) {
 }
 
 TEST(phase5_select_into_no_data_raised) {
-    remove("mypl.db");
-    remove("mypl.db.packages");
+    remove("auspex.db");
+    remove("auspex.db.packages");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table empty_table (id int);\n"
         "    int x = 0;\n"
@@ -118,7 +118,7 @@ TEST(phase5_select_into_no_data_raised) {
 
 TEST(phase5_undefined_exception_rejected) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    try {\n"
         "        raise unknown_error;\n"
@@ -134,7 +134,7 @@ TEST(phase5_undefined_exception_rejected) {
 
 TEST(phase5_try_without_error_continues) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    try {\n"
         "        int x = 7;\n"

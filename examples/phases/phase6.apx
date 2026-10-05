@@ -1,5 +1,5 @@
 // Phase 6: Collections & Bulk Binds
-// Run with: ./bin/mypl --db :memory: examples/phase6.mypl
+// Run with: ./bin/auspex --db :memory: examples/phase6.apx
 // smoke: requires sqlite
 // smoke: args --db :memory:
 

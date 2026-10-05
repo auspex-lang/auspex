@@ -189,6 +189,11 @@ struct DBDriver {
 
 void custom_driver_init(DBDriver* driver);
 
+/* Default custom-engine database: auspex.db, or MyPL's mypl.db (with a
+   one-time deprecation warning on stderr) when only that one exists. The
+   mypl.db fallback goes away in v0.4.0. */
+const char* default_db_path(void);
+
 /* Storage layer */
 #define PAGE_SIZE 4096
 

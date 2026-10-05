@@ -13,10 +13,10 @@ receive an initial response within a few days.
 
 ## Scope
 
-MyPL is a local, single-user scripting prototype. Security considerations
+Auspex is a local, single-user scripting prototype. Security considerations
 that matter for this project:
 
-- The VM executes bytecode from `.mypl` sources; treat any interpreter
+- The VM executes bytecode from `.apx` sources; treat any interpreter
   that can be fed untrusted input as out of scope for hardening guarantees.
 - SQL is passed through to the active database driver — use `?var`
   parameter binding instead of string concatenation for untrusted data.

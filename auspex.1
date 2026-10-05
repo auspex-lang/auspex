@@ -1,12 +1,12 @@
-.TH MYPL 1 "September 2026" "MyPL 0.1.0" "User Commands"
+.TH AUSPEX 1 "October 2026" "Auspex 0.2.0" "User Commands"
 .SH NAME
-mypl \- the MyPL interpreter (a lightweight PL/SQL-style scripting language)
+auspex \- the Auspex interpreter (a lightweight PL/SQL-style scripting language)
 .SH SYNOPSIS
-.B mypl
+.B auspex
 .RI [ options ]
 .RI [ file ]
 .SH DESCRIPTION
-MyPL compiles C-like source files (\fI*.mypl\fR) to bytecode for a small
+Auspex compiles C-like source files (\fI*.apx\fR) to bytecode for a small
 stack VM and can run against either its built-in custom SQL engine or an
 optional SQLite backend. Without a file argument, an interactive REPL is
 started.
@@ -26,21 +26,22 @@ Show a short usage summary.
 .B \-\-version
 Print version information.
 .SH REPL
-When started without a file, MyPL reads statements interactively.
+When started without a file, Auspex reads statements interactively.
 Dot-commands include \fB.exit\fR/\fB.quit\fR, \fB.help\fR, \fB.load\fR,
 \fB.connect\fR, \fB.tables\fR, \fB.schema\fR, \fB.columns\fR,
 \fB.count\fR, \fB.sql\fR, \fB.vars\fR, \fB.defs\fR, and \fB.history\fR.
 .SH FILES
 .TP
-.I mypl.db
-Default database file for the custom engine.
+.I auspex.db
+Default database file for the custom engine. If it is missing and a
+MyPL-era \fImypl.db\fR exists, that file is used instead (with a warning).
 .SH EXAMPLES
 .TP
 Run a program against the custom engine:
-.B mypl program.mypl
+.B auspex program.apx
 .TP
 Run against an in-memory SQLite database with a debug flag:
-.B mypl -DDEBUG program.mypl --db :memory:
+.B auspex -DDEBUG program.apx --db :memory:
 .SH SEE ALSO
 The documentation in docs/ (language.md, engines.md, examples.md), the
 README, and the examples/ directory in the source distribution.

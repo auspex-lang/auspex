@@ -8,7 +8,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
     char error[256];
     error[0] = '\0';
-    Program* program = parse_with_path(source, "fuzz.mypl", error, sizeof(error));
+    Program* program = parse_with_path(source, "fuzz.apx", error, sizeof(error));
     if (program != NULL) {
         free_program(program);
     } else {

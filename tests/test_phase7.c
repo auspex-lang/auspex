@@ -2,18 +2,18 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int run_mypl_with_setup(const char* source, const char* setup, const char* args, char* out, size_t out_size) {
+static int run_auspex_with_setup(const char* source, const char* setup, const char* args, char* out, size_t out_size) {
     const char* db_arg = args != NULL ? args : "";
 
     if (setup != NULL) {
-        FILE* f = fopen("/tmp/test_phase7_setup.mypl", "w");
+        FILE* f = fopen("/tmp/test_phase7_setup.apx", "w");
         if (f == NULL) return -1;
         fprintf(f, "%s", setup);
         fclose(f);
 
         char setup_cmd[1024];
         snprintf(setup_cmd, sizeof(setup_cmd),
-                 "./bin/mypl /tmp/test_phase7_setup.mypl %s > /tmp/test_phase7_setup_out.txt 2>&1",
+                 "./bin/auspex /tmp/test_phase7_setup.apx %s > /tmp/test_phase7_setup_out.txt 2>&1",
                  db_arg);
         int setup_rc = system(setup_cmd);
         if (WEXITSTATUS(setup_rc) != 0) {
@@ -28,13 +28,13 @@ static int run_mypl_with_setup(const char* source, const char* setup, const char
         }
     }
 
-    FILE* f = fopen("/tmp/test_phase7_src.mypl", "w");
+    FILE* f = fopen("/tmp/test_phase7_src.apx", "w");
     if (f == NULL) return -1;
     fprintf(f, "%s", source);
     fclose(f);
 
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "./bin/mypl /tmp/test_phase7_src.mypl %s > /tmp/test_phase7_out.txt 2>&1", db_arg);
+    snprintf(cmd, sizeof(cmd), "./bin/auspex /tmp/test_phase7_src.apx %s > /tmp/test_phase7_out.txt 2>&1", db_arg);
     int rc = system(cmd);
 
     FILE* outf = fopen("/tmp/test_phase7_out.txt", "r");
@@ -47,13 +47,13 @@ static int run_mypl_with_setup(const char* source, const char* setup, const char
     return WEXITSTATUS(rc);
 }
 
-static int run_mypl(const char* source, const char* args, char* out, size_t out_size) {
-    return run_mypl_with_setup(source, NULL, args, out, out_size);
+static int run_auspex(const char* source, const char* args, char* out, size_t out_size) {
+    return run_auspex_with_setup(source, NULL, args, out, out_size);
 }
 
 TEST(phase7_var_percent_type) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    int x = 42;\n"
         "    x%type y = 7;\n"
@@ -68,8 +68,8 @@ TEST(phase7_var_percent_type) {
 
 TEST(phase7_column_percent_type) {
     char out[512];
-    remove("mypl.db");
-    int rc = run_mypl_with_setup(
+    remove("auspex.db");
+    int rc = run_auspex_with_setup(
         "proc main() -> int {\n"
         "    products.name%type p_name;\n"
         "    p_name = \"widget\";\n"
@@ -87,8 +87,8 @@ TEST(phase7_column_percent_type) {
 
 TEST(phase7_table_percent_rowtype) {
     char out[512];
-    remove("mypl.db");
-    int rc = run_mypl_with_setup(
+    remove("auspex.db");
+    int rc = run_auspex_with_setup(
         "proc main() -> int {\n"
         "    products%rowtype r;\n"
         "    r.id = 1;\n"
@@ -109,7 +109,7 @@ TEST(phase7_table_percent_rowtype) {
 
 TEST(phase7_date_type_and_to_char) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    date d = to_date(\"2024-03-15\", \"YYYY-MM-DD\");\n"
         "    string s = to_char(d, \"YYYY-MM-DD\");\n"
@@ -123,7 +123,7 @@ TEST(phase7_date_type_and_to_char) {
 
 TEST(phase7_timestamp_type_and_current) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    timestamp t = current_timestamp();\n"
         "    string s = to_char(t, \"YYYY-MM-DD\");\n"
@@ -137,7 +137,7 @@ TEST(phase7_timestamp_type_and_current) {
 
 TEST(phase7_user_defined_subtype) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    subtype score is int;\n"
         "    score s = 95;\n"

@@ -1,10 +1,10 @@
 // Phase 12: packages declared in imported modules are initialized.
 //
-// counter_pkg.mypl declares package-level state (counter = 41). Run with:
-//   ./bin/mypl examples/phases/phase12_import_packages.mypl
+// counter_pkg.apx declares package-level state (counter = 41). Run with:
+//   ./bin/auspex examples/phases/phase12_import_packages.apx
 // Expected output: 41 then 42 — the initializer runs before main() exactly
 // as if the package were declared in the main file.
-import "../modules/phase12_counter_pkg.mypl";
+import "../modules/phase12_counter_pkg.apx";
 
 proc main() -> int {
     print int_to_string(counter.get());

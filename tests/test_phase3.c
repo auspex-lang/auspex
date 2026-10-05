@@ -2,18 +2,18 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int run_mypl(const char* source, const char* args, char* out, size_t out_size) {
-    remove("mypl.db");
-    FILE* f = fopen("/tmp/test_phase3_src.mypl", "w");
+static int run_auspex(const char* source, const char* args, char* out, size_t out_size) {
+    remove("auspex.db");
+    FILE* f = fopen("/tmp/test_phase3_src.apx", "w");
     if (f == NULL) return -1;
     fprintf(f, "%s", source);
     fclose(f);
 
     char cmd[1024];
     if (args != NULL) {
-        snprintf(cmd, sizeof(cmd), "./bin/mypl /tmp/test_phase3_src.mypl %s > /tmp/test_phase3_out.txt 2>&1", args);
+        snprintf(cmd, sizeof(cmd), "./bin/auspex /tmp/test_phase3_src.apx %s > /tmp/test_phase3_out.txt 2>&1", args);
     } else {
-        snprintf(cmd, sizeof(cmd), "./bin/mypl /tmp/test_phase3_src.mypl > /tmp/test_phase3_out.txt 2>&1");
+        snprintf(cmd, sizeof(cmd), "./bin/auspex /tmp/test_phase3_src.apx > /tmp/test_phase3_out.txt 2>&1");
     }
     int rc = system(cmd);
 
@@ -29,7 +29,7 @@ static int run_mypl(const char* source, const char* args, char* out, size_t out_
 
 TEST(phase3_cursor_declare_open_fetch_close) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table t1 (id int, name string);\n"
         "    insert into t1 values (1, 'Alice');\n"
@@ -52,7 +52,7 @@ TEST(phase3_cursor_declare_open_fetch_close) {
 
 TEST(phase3_cursor_dynamic_open_fetch_loop) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table t2 (id int, name string);\n"
         "    insert into t2 values (1, 'a');\n"
@@ -78,7 +78,7 @@ TEST(phase3_cursor_dynamic_open_fetch_loop) {
 
 TEST(phase3_cursor_attributes) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table t3 (id int, name string);\n"
         "    insert into t3 values (1, 'Alice');\n"
@@ -110,7 +110,7 @@ TEST(phase3_cursor_attributes) {
 
 TEST(phase3_cursor_passed_to_procedure) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc process(c cursor) -> int {\n"
         "    int id = 0;\n"
         "    string name = \"\";\n"

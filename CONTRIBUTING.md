@@ -1,4 +1,4 @@
-# Contributing to MyPL
+# Contributing to Auspex
 
 Thanks for taking the time to contribute! This document explains how to get
 started, what we expect from patches, and how the workflow looks.
@@ -63,7 +63,7 @@ make clean && make USE_SQLITE=0 && make USE_SQLITE=0 test
    example through `tests/run_examples.sh` (also `make examples-test`) and
    requires exit 0. If an example needs arguments, another example run first,
    SQLite or Linux, say so with `// smoke:` comment lines (`args --db :memory:`,
-   `setup other.mypl`, `requires sqlite`, `requires linux`, `skip <reason>`).
+   `setup other.apx`, `requires sqlite`, `requires linux`, `skip <reason>`).
 6. **AGENTS.md** is a gitignored handoff document: update it when you change
    architecture, conventions, or known limitations.
 
@@ -97,7 +97,7 @@ graphify output. Check `.gitignore` before `git add -A`.
 
 1. **Issues first.** Look for an open issue describing the work
    (roadmap phases are tracked as issues and on the
-   [MyPL Roadmap](https://github.com/users/LPuehringerStudent/projects/9)
+   [Auspex Roadmap](https://github.com/users/LPuehringerStudent/projects/9)
    project). If none exists, open one.
 2. **Branch per issue.** `git checkout -b issue-<number>-short-title`.
 3. **One logical change per PR.** Keep diffs focused; no drive-by

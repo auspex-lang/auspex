@@ -1,6 +1,6 @@
 name: Windows
 
-# MyPL built with MinGW-w64 under MSYS2, running the same test suites and
+# Auspex built with MinGW-w64 under MSYS2, running the same test suites and
 # examples as Linux and macOS (#90, #96).
 
 on:
@@ -48,7 +48,7 @@ jobs:
       run: make clean && make all CC=gcc
 
     - name: Show version
-      run: ./bin/mypl.exe --version
+      run: ./bin/auspex.exe --version
 
     - name: Run tests
       # Every suite, the fuzz corpus replay and the examples, as on Linux.

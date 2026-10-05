@@ -1,5 +1,5 @@
-#ifndef MYPL_FUZZ_COMMON_H
-#define MYPL_FUZZ_COMMON_H
+#ifndef AUSPEX_FUZZ_COMMON_H
+#define AUSPEX_FUZZ_COMMON_H
 
 #include <stddef.h>
 #include <stdint.h>

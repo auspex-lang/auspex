@@ -1,7 +1,7 @@
 // Phase 12: trigger persistence, DROP TRIGGER, and triggers on dynamic SQL.
 //
 // Trigger declarations are persisted as program units (the <db>.programs
-// sidecar for the custom engine, the _mypl_program_units table on SQLite),
+// sidecar for the custom engine, the _auspex_program_units table on SQLite),
 // so a trigger created in one process keeps firing in later ones until it is
 // dropped with `drop trigger <name>;`.
 //

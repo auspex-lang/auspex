@@ -928,7 +928,7 @@ static SequenceSlot* sequence_find(VM* vm, const char* name) {
 
 /* Sequences persist through the active storage backend: the custom engine
    keeps them in the V5 catalog page, the SQLite driver in the
-   _mypl_sequences table. The VM slots are a cache, populated lazily on the
+   _auspex_sequences table. The VM slots are a cache, populated lazily on the
    first sequence op after a driver/context is attached, and every mutation
    is written through immediately so a later process resumes where the
    previous one stopped. */

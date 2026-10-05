@@ -4,13 +4,13 @@
 #include <string.h>
 #include <unistd.h>
 
-static int run_mypl(const char* source, char* out, size_t out_size) {
-    FILE* f = fopen("/tmp/test_phase11_src.mypl", "w");
+static int run_auspex(const char* source, char* out, size_t out_size) {
+    FILE* f = fopen("/tmp/test_phase11_src.apx", "w");
     if (f == NULL) return -1;
     fprintf(f, "%s", source);
     fclose(f);
 
-    int rc = system("./bin/mypl /tmp/test_phase11_src.mypl > /tmp/test_phase11_out.txt 2>&1");
+    int rc = system("./bin/auspex /tmp/test_phase11_src.apx > /tmp/test_phase11_out.txt 2>&1");
 
     FILE* outf = fopen("/tmp/test_phase11_out.txt", "r");
     if (outf != NULL) {
@@ -22,16 +22,16 @@ static int run_mypl(const char* source, char* out, size_t out_size) {
     return WEXITSTATUS(rc);
 }
 
-/* Same as run_mypl, but with MYPL_INDEX_DEBUG set so the engine logs every
+/* Same as run_auspex, but with AUSPEX_INDEX_DEBUG set so the engine logs every
    index-served lookup. Asserting on that log is the only way to tell an index
    scan from a full scan, since both must produce the same rows. */
-static int run_mypl_index_debug(const char* source, char* out, size_t out_size) {
-    FILE* f = fopen("/tmp/test_phase11_src.mypl", "w");
+static int run_auspex_index_debug(const char* source, char* out, size_t out_size) {
+    FILE* f = fopen("/tmp/test_phase11_src.apx", "w");
     if (f == NULL) return -1;
     fprintf(f, "%s", source);
     fclose(f);
 
-    int rc = system("MYPL_INDEX_DEBUG=1 ./bin/mypl /tmp/test_phase11_src.mypl"
+    int rc = system("AUSPEX_INDEX_DEBUG=1 ./bin/auspex /tmp/test_phase11_src.apx"
                     " > /tmp/test_phase11_out.txt 2>&1");
 
     FILE* outf = fopen("/tmp/test_phase11_out.txt", "r");
@@ -61,7 +61,7 @@ static int count_occurrences(const char* out, const char* substr) {
 
 TEST(phase11_null_literal_assign_and_print) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    int x = null;\n"
         "    print x;\n"
@@ -80,7 +80,7 @@ TEST(phase11_null_literal_assign_and_print) {
 
 TEST(phase11_null_arithmetic_yields_null) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    int x = null;\n"
         "    print x + 1;\n"
@@ -96,7 +96,7 @@ TEST(phase11_null_arithmetic_yields_null) {
 
 TEST(phase11_null_comparison_is_three_valued) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    int x = null;\n"
         "    if x == null {\n"
@@ -124,7 +124,7 @@ TEST(phase11_null_comparison_is_three_valued) {
 
 TEST(phase11_null_condition_is_not_true) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    if null {\n"
         "        print \"taken\";\n"
@@ -147,9 +147,9 @@ TEST(phase11_null_condition_is_not_true) {
 }
 
 TEST(phase11_insert_null_select_returns_null) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table n_t (id int, name string);\n"
         "    insert into n_t values (1, \"alice\");\n"
@@ -169,9 +169,9 @@ TEST(phase11_insert_null_select_returns_null) {
 }
 
 TEST(phase11_where_is_null_filters) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table n_t (id int, name string);\n"
         "    insert into n_t values (1, \"alice\");\n"
@@ -187,9 +187,9 @@ TEST(phase11_where_is_null_filters) {
 }
 
 TEST(phase11_where_is_not_null_filters) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table n_t (id int, name string);\n"
         "    insert into n_t values (1, \"alice\");\n"
@@ -205,9 +205,9 @@ TEST(phase11_where_is_not_null_filters) {
 }
 
 TEST(phase11_aggregates_skip_null) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table n_t (id int, val int);\n"
         "    insert into n_t values (1, 10);\n"
@@ -236,7 +236,7 @@ TEST(phase11_aggregates_skip_null) {
 
 TEST(phase11_coalesce_returns_first_non_null) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    int x = null;\n"
         "    print coalesce(x, 5);\n"
@@ -253,7 +253,7 @@ TEST(phase11_coalesce_returns_first_non_null) {
 
 TEST(phase11_nvl_alias) {
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    string s = null;\n"
         "    print nvl(s, \"fallback\");\n"
@@ -267,9 +267,9 @@ TEST(phase11_nvl_alias) {
 }
 
 TEST(phase11_drop_table_recreate_works) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table d_t (id int);\n"
         "    insert into d_t values (1);\n"
@@ -291,7 +291,7 @@ TEST(phase11_drop_table_recreate_works) {
     ASSERT_INT_EQ(1, output_contains(out, "new"));
 
     /* The recreated table persists across process restarts. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    int n = -1;\n"
         "    select count(*) into n from d_t;\n"
@@ -304,9 +304,9 @@ TEST(phase11_drop_table_recreate_works) {
 }
 
 TEST(phase11_drop_missing_table_errors) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    drop table nope;\n"
         "    return 0;\n"
@@ -316,9 +316,9 @@ TEST(phase11_drop_missing_table_errors) {
 }
 
 TEST(phase11_drop_table_if_exists) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    drop table if exists maybe_t;\n"
         "    create table maybe_t (id int);\n"
@@ -333,9 +333,9 @@ TEST(phase11_drop_table_if_exists) {
 }
 
 TEST(phase11_alter_add_column) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table a_t (id int, name string);\n"
         "    insert into a_t values (1, \"alice\");\n"
@@ -347,7 +347,7 @@ TEST(phase11_alter_add_column) {
     ASSERT_INT_EQ(0, rc);
 
     /* New process: the added column persists; old rows read back as null. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    int old_age = -1;\n"
         "    select age into old_age from a_t where id = 1;\n"
@@ -368,9 +368,9 @@ TEST(phase11_alter_add_column) {
 }
 
 TEST(phase11_alter_add_column_insert_needs_new_column) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table a2_t (id int);\n"
         "    alter table a2_t add column tag string;\n"
@@ -383,9 +383,9 @@ TEST(phase11_alter_add_column_insert_needs_new_column) {
 }
 
 TEST(phase11_alter_drop_column) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table dc_t (id int, name string);\n"
         "    insert into dc_t values (1, \"alice\");\n"
@@ -398,7 +398,7 @@ TEST(phase11_alter_drop_column) {
     ASSERT_INT_EQ(0, rc);
 
     /* New process: remaining column keeps its data across the rebuild. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    int n = -1;\n"
         "    select count(*) into n from dc_t;\n"
@@ -414,7 +414,7 @@ TEST(phase11_alter_drop_column) {
     ASSERT_INT_EQ(1, output_contains(out, "2"));
 
     /* Selecting the dropped column is an error. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    for row in select name from dc_t {\n"
         "        print row.name;\n"
@@ -426,9 +426,9 @@ TEST(phase11_alter_drop_column) {
 }
 
 TEST(phase11_alter_missing_table_errors) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    alter table nope add column x int;\n"
         "    return 0;\n"
@@ -449,9 +449,9 @@ TEST(phase11_alter_missing_table_errors) {
     "    insert into w_t values (5, \"plum\", null);\n"
 
 TEST(phase11_where_and_filters) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         PHASE11_W_T_SETUP
         "    int n = -1;\n"
@@ -466,9 +466,9 @@ TEST(phase11_where_and_filters) {
 }
 
 TEST(phase11_where_or_filters) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         PHASE11_W_T_SETUP
         "    int n = -1;\n"
@@ -482,9 +482,9 @@ TEST(phase11_where_or_filters) {
 }
 
 TEST(phase11_where_and_or_precedence) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         PHASE11_W_T_SETUP
         "    int n1 = -1;\n"
@@ -504,9 +504,9 @@ TEST(phase11_where_and_or_precedence) {
 }
 
 TEST(phase11_where_not_filters) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         PHASE11_W_T_SETUP
         "    int n = -1;\n"
@@ -521,9 +521,9 @@ TEST(phase11_where_not_filters) {
 }
 
 TEST(phase11_where_not_binds_tighter_than_and) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         PHASE11_W_T_SETUP
         "    int n = -1;\n"
@@ -538,9 +538,9 @@ TEST(phase11_where_not_binds_tighter_than_and) {
 }
 
 TEST(phase11_where_in_list) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         PHASE11_W_T_SETUP
         "    int n = -1;\n"
@@ -558,9 +558,9 @@ TEST(phase11_where_in_list) {
 }
 
 TEST(phase11_where_not_in_list) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         PHASE11_W_T_SETUP
         "    int n = -1;\n"
@@ -575,9 +575,9 @@ TEST(phase11_where_not_in_list) {
 }
 
 TEST(phase11_where_in_with_null_is_three_valued) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         PHASE11_W_T_SETUP
         "    int n = -1;\n"
@@ -597,9 +597,9 @@ TEST(phase11_where_in_with_null_is_three_valued) {
 }
 
 TEST(phase11_where_like_percent) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         PHASE11_W_T_SETUP
         "    int n = -1;\n"
@@ -618,9 +618,9 @@ TEST(phase11_where_like_percent) {
 }
 
 TEST(phase11_where_like_underscore) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         PHASE11_W_T_SETUP
         "    int n = -1;\n"
@@ -638,9 +638,9 @@ TEST(phase11_where_like_underscore) {
 }
 
 TEST(phase11_where_like_is_case_sensitive) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         PHASE11_W_T_SETUP
         "    int n = -1;\n"
@@ -655,9 +655,9 @@ TEST(phase11_where_like_is_case_sensitive) {
 }
 
 TEST(phase11_where_not_like) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         PHASE11_W_T_SETUP
         "    int n = -1;\n"
@@ -672,9 +672,9 @@ TEST(phase11_where_not_like) {
 }
 
 TEST(phase11_where_null_comparison_stays_unknown) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         PHASE11_W_T_SETUP
         "    int n = -1;\n"
@@ -694,9 +694,9 @@ TEST(phase11_where_null_comparison_stays_unknown) {
 }
 
 TEST(phase11_update_compound_where) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         PHASE11_W_T_SETUP
         "    update w_t set qty = 99 where id = 1 or id = 2;\n"
@@ -727,9 +727,9 @@ TEST(phase11_update_compound_where) {
 }
 
 TEST(phase11_delete_compound_where) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         PHASE11_W_T_SETUP
         "    delete from w_t where id in (2, 4) or qty is null;\n"
@@ -755,9 +755,9 @@ TEST(phase11_delete_compound_where) {
 }
 
 TEST(phase11_join_compound_where) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table j_a (id int, k int);\n"
         "    create table j_b (k int, tag string);\n"
@@ -780,9 +780,9 @@ TEST(phase11_join_compound_where) {
 }
 
 TEST(phase11_create_index_and_indexed_select) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table ix_t (id int, name string);\n"
         "    insert into ix_t values (1, \"alice\");\n"
@@ -804,9 +804,9 @@ TEST(phase11_create_index_and_indexed_select) {
 }
 
 TEST(phase11_index_covers_preexisting_rows) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table ix2_t (id int, name string);\n"
         "    insert into ix2_t values (1, \"alice\");\n"
@@ -825,9 +825,9 @@ TEST(phase11_index_covers_preexisting_rows) {
 }
 
 TEST(phase11_index_maintained_on_insert) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table ix3_t (id int, name string);\n"
         "    insert into ix3_t values (1, \"alice\");\n"
@@ -846,9 +846,9 @@ TEST(phase11_index_maintained_on_insert) {
 }
 
 TEST(phase11_index_maintained_on_update_and_delete) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table ix4_t (id int, name string);\n"
         "    insert into ix4_t values (1, \"alice\");\n"
@@ -877,9 +877,9 @@ TEST(phase11_index_maintained_on_update_and_delete) {
 }
 
 TEST(phase11_index_persists_across_restarts) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table ix5_t (id int, name string);\n"
         "    insert into ix5_t values (1, \"alice\");\n"
@@ -891,7 +891,7 @@ TEST(phase11_index_persists_across_restarts) {
     ASSERT_INT_EQ(0, rc);
 
     /* New process: index metadata and tree pages are reloaded. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    string s = \"?\";\n"
         "    select name into s from ix5_t where id = 2;\n"
@@ -904,7 +904,7 @@ TEST(phase11_index_persists_across_restarts) {
     ASSERT_INT_EQ(1, output_contains(out, "bob"));
 
     /* Third process: the row inserted after reopen is indexed. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    string s = \"?\";\n"
         "    select name into s from ix5_t where id = 3;\n"
@@ -917,9 +917,9 @@ TEST(phase11_index_persists_across_restarts) {
 }
 
 TEST(phase11_drop_index_keeps_scan_correct) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table ix6_t (id int, name string);\n"
         "    insert into ix6_t values (1, \"alice\");\n"
@@ -937,9 +937,9 @@ TEST(phase11_drop_index_keeps_scan_correct) {
 }
 
 TEST(phase11_index_on_other_column_still_correct) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table ix7_t (id int, name string);\n"
         "    insert into ix7_t values (1, \"alice\");\n"
@@ -962,9 +962,9 @@ TEST(phase11_index_on_other_column_still_correct) {
 }
 
 TEST(phase11_create_index_missing_table_errors) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create index ix_no on nope (id);\n"
         "    return 0;\n"
@@ -974,9 +974,9 @@ TEST(phase11_create_index_missing_table_errors) {
 }
 
 TEST(phase11_create_index_missing_column_errors) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table ix8_t (id int);\n"
         "    create index ix8_no on ix8_t (nope);\n"
@@ -987,9 +987,9 @@ TEST(phase11_create_index_missing_column_errors) {
 }
 
 TEST(phase11_create_duplicate_index_errors) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table ix9_t (id int);\n"
         "    create index ix9_id on ix9_t (id);\n"
@@ -1001,9 +1001,9 @@ TEST(phase11_create_duplicate_index_errors) {
 }
 
 TEST(phase11_drop_missing_index_errors) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table ix10_t (id int);\n"
         "    drop index ix10_no;\n"
@@ -1014,9 +1014,9 @@ TEST(phase11_drop_missing_index_errors) {
 }
 
 TEST(phase11_drop_table_removes_its_indexes) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table ix11_t (id int, name string);\n"
         "    insert into ix11_t values (1, \"alice\");\n"
@@ -1041,9 +1041,9 @@ TEST(phase11_drop_table_removes_its_indexes) {
 }
 
 TEST(phase11_index_range_lookup) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table ix12_t (id int, name string);\n"
         "    insert into ix12_t values (1, \"a\");\n"
@@ -1072,9 +1072,9 @@ TEST(phase11_index_range_lookup) {
 }
 
 TEST(phase11_index_string_lookup) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table ix13_t (id int, name string);\n"
         "    insert into ix13_t values (1, \"alice\");\n"
@@ -1100,9 +1100,9 @@ TEST(phase11_index_string_lookup) {
 #define IX_PREFIX "abcdefghijklmnopqrstuvwxyz0123456789"
 
 TEST(phase11_index_string_range_lookup) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table ix15_t (id int, name string);\n"
         "    insert into ix15_t values (1, \"alice\");\n"
@@ -1141,9 +1141,9 @@ TEST(phase11_index_string_range_lookup) {
    WHERE pass decide. Losing one would be a wrong answer, gaining one is only
    wasted work. */
 TEST(phase11_index_long_string_keys_keep_every_row) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table ix16_t (id int, name string);\n"
         "    insert into ix16_t values (1, \"" IX_PREFIX "-alpha\");\n"
@@ -1181,9 +1181,9 @@ TEST(phase11_index_long_string_keys_keep_every_row) {
 /* An index must never change an answer, so the same predicates are run against
    the same data with and without one. */
 TEST(phase11_index_string_predicates_agree_with_full_scan) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc report(tag string) -> int {\n"
         "    int gt = -1;\n"
         "    select count(*) into gt from ix17_t where name > \"" IX_PREFIX "-beta\";\n"
@@ -1225,9 +1225,9 @@ TEST(phase11_index_string_predicates_agree_with_full_scan) {
    the case that says the capability exists at all rather than that the answers
    are right. */
 TEST(phase11_index_serves_string_ranges_not_just_equality) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[2048];
-    int rc = run_mypl_index_debug(
+    int rc = run_auspex_index_debug(
         "proc main() -> int {\n"
         "    create table ix18_t (id int, name string);\n"
         "    insert into ix18_t values (1, \"alice\");\n"
@@ -1248,9 +1248,9 @@ TEST(phase11_index_serves_string_ranges_not_just_equality) {
 /* A <> term still has to fall back: it selects everything except one key, which
    no single range scan describes. */
 TEST(phase11_index_skips_string_inequality) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[2048];
-    int rc = run_mypl_index_debug(
+    int rc = run_auspex_index_debug(
         "proc main() -> int {\n"
         "    create table ix19_t (id int, name string);\n"
         "    insert into ix19_t values (1, \"alice\");\n"
@@ -1268,9 +1268,9 @@ TEST(phase11_index_skips_string_inequality) {
 }
 
 TEST(phase11_index_survives_alter_rebuild) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table ix14_t (id int, name string);\n"
         "    insert into ix14_t values (1, \"alice\");\n"
@@ -1298,9 +1298,9 @@ TEST(phase11_index_survives_alter_rebuild) {
 /* -------------------------------------------------------------------------- */
 
 TEST(phase11_not_null_rejects_null_insert) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[1024];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table nn_t (id int, name string not null);\n"
         "    insert into nn_t values (1, null);\n"
@@ -1312,9 +1312,9 @@ TEST(phase11_not_null_rejects_null_insert) {
 }
 
 TEST(phase11_not_null_accepts_values) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[1024];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table nn2_t (id int not null, name string not null);\n"
         "    insert into nn2_t values (1, \"alice\");\n"
@@ -1330,9 +1330,9 @@ TEST(phase11_not_null_accepts_values) {
 }
 
 TEST(phase11_unique_rejects_duplicate_insert) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[1024];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table uq_t (id int, email string unique);\n"
         "    insert into uq_t values (1, \"a@x\");\n"
@@ -1345,9 +1345,9 @@ TEST(phase11_unique_rejects_duplicate_insert) {
 }
 
 TEST(phase11_unique_allows_multiple_nulls) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[1024];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table uq2_t (id int, email string unique);\n"
         "    insert into uq2_t values (1, null);\n"
@@ -1362,9 +1362,9 @@ TEST(phase11_unique_allows_multiple_nulls) {
 }
 
 TEST(phase11_primary_key_rejects_duplicate) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[1024];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table pk_t (id int primary key, name string);\n"
         "    insert into pk_t values (1, \"alice\");\n"
@@ -1377,9 +1377,9 @@ TEST(phase11_primary_key_rejects_duplicate) {
 }
 
 TEST(phase11_primary_key_rejects_null) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[1024];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table pk2_t (id int primary key, name string);\n"
         "    insert into pk2_t values (null, \"alice\");\n"
@@ -1391,9 +1391,9 @@ TEST(phase11_primary_key_rejects_null) {
 }
 
 TEST(phase11_second_primary_key_rejected) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[1024];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table pk3_t (id int primary key, code int primary key);\n"
         "    return 0;\n"
@@ -1404,9 +1404,9 @@ TEST(phase11_second_primary_key_rejected) {
 }
 
 TEST(phase11_default_type_mismatch_rejected) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[1024];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table dm_t (id int, qty int default \"seven\");\n"
         "    return 0;\n"
@@ -1417,9 +1417,9 @@ TEST(phase11_default_type_mismatch_rejected) {
 }
 
 TEST(phase11_default_backfills_alter_add_column) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[1024];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table d_t (id int);\n"
         "    insert into d_t values (1);\n"
@@ -1440,9 +1440,9 @@ TEST(phase11_default_backfills_alter_add_column) {
 }
 
 TEST(phase11_default_fills_null_insert) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[1024];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table d2_t (id int, qty int default 7);\n"
         "    insert into d2_t values (1, null);\n"
@@ -1461,9 +1461,9 @@ TEST(phase11_default_fills_null_insert) {
 }
 
 TEST(phase11_constraints_persist_across_restarts) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[1024];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table p_t (id int primary key, name string not null);\n"
         "    insert into p_t values (1, \"alice\");\n"
@@ -1473,7 +1473,7 @@ TEST(phase11_constraints_persist_across_restarts) {
     ASSERT_INT_EQ(0, rc);
 
     /* New process: the PRIMARY KEY constraint is still enforced. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    insert into p_t values (1, \"bob\");\n"
         "    return 0;\n"
@@ -1483,7 +1483,7 @@ TEST(phase11_constraints_persist_across_restarts) {
     ASSERT_INT_EQ(1, output_contains(out, "PRIMARY KEY constraint"));
 
     /* New process: the NOT NULL constraint is still enforced. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    insert into p_t values (2, null);\n"
         "    return 0;\n"
@@ -1493,7 +1493,7 @@ TEST(phase11_constraints_persist_across_restarts) {
     ASSERT_INT_EQ(1, output_contains(out, "NOT NULL constraint"));
 
     /* New process: a valid row still inserts and reads back. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    insert into p_t values (2, \"bob\");\n"
         "    string s = \"?\";\n"
@@ -1507,9 +1507,9 @@ TEST(phase11_constraints_persist_across_restarts) {
 }
 
 TEST(phase11_not_null_rejects_null_update) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[1024];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table un_t (id int, name string not null);\n"
         "    insert into un_t values (1, \"alice\");\n"
@@ -1521,7 +1521,7 @@ TEST(phase11_not_null_rejects_null_update) {
     ASSERT_INT_EQ(1, output_contains(out, "NOT NULL constraint"));
 
     /* New process: the rejected UPDATE left the row unchanged. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    string s = \"?\";\n"
         "    select name into s from un_t where id = 1;\n"
@@ -1534,9 +1534,9 @@ TEST(phase11_not_null_rejects_null_update) {
 }
 
 TEST(phase11_unique_rejects_duplicate_update) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[1024];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table uq3_t (id int, email string unique);\n"
         "    insert into uq3_t values (1, \"a@x\");\n"
@@ -1549,7 +1549,7 @@ TEST(phase11_unique_rejects_duplicate_update) {
     ASSERT_INT_EQ(1, output_contains(out, "UNIQUE constraint"));
 
     /* New process: the rejected UPDATE left the row unchanged. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    string s = \"?\";\n"
         "    select email into s from uq3_t where id = 2;\n"
@@ -1566,9 +1566,9 @@ TEST(phase11_unique_rejects_duplicate_update) {
 /* -------------------------------------------------------------------------- */
 
 TEST(phase11_create_view_and_select) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table v1_t (id int, name string, qty int);\n"
         "    insert into v1_t values (1, \"apple\", 10);\n"
@@ -1591,9 +1591,9 @@ TEST(phase11_create_view_and_select) {
 }
 
 TEST(phase11_view_outer_where_order_limit) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table v2_t (id int, qty int);\n"
         "    insert into v2_t values (1, 10);\n"
@@ -1616,9 +1616,9 @@ TEST(phase11_view_outer_where_order_limit) {
 }
 
 TEST(phase11_view_star_select_for_row) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table v3_t (id int, name string);\n"
         "    insert into v3_t values (1, \"alice\");\n"
@@ -1630,7 +1630,7 @@ TEST(phase11_view_star_select_for_row) {
     ASSERT_INT_EQ(0, rc);
 
     /* New process: the view persists and row fields resolve through it. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    for row in select id, name from v3_v order by id {\n"
         "        print row.id;\n"
@@ -1645,9 +1645,9 @@ TEST(phase11_view_star_select_for_row) {
 }
 
 TEST(phase11_view_persists_across_restarts) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table v4_t (id int, name string, qty int);\n"
         "    insert into v4_t values (1, \"apple\", 10);\n"
@@ -1659,7 +1659,7 @@ TEST(phase11_view_persists_across_restarts) {
     ASSERT_INT_EQ(0, rc);
 
     /* New process: the view definition is reloaded from the catalog. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    int n = -1;\n"
         "    select count(*) into n from v4_v;\n"
@@ -1676,9 +1676,9 @@ TEST(phase11_view_persists_across_restarts) {
 }
 
 TEST(phase11_drop_view_then_select_errors) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table v5_t (id int);\n"
         "    insert into v5_t values (7);\n"
@@ -1689,7 +1689,7 @@ TEST(phase11_drop_view_then_select_errors) {
     ASSERT_INT_EQ(0, rc);
 
     /* Dropping the view succeeds; the base table is untouched. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    drop view v5_v;\n"
         "    int n = -1;\n"
@@ -1702,7 +1702,7 @@ TEST(phase11_drop_view_then_select_errors) {
     ASSERT_INT_EQ(1, output_contains(out, "1"));
 
     /* New process: selecting from the dropped view errors. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    for row in select id from v5_v {\n"
         "        print row.id;\n"
@@ -1714,9 +1714,9 @@ TEST(phase11_drop_view_then_select_errors) {
 }
 
 TEST(phase11_drop_view_if_exists) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    drop view if exists v6_v;\n"
         "    create table v6_t (id int);\n"
@@ -1732,9 +1732,9 @@ TEST(phase11_drop_view_if_exists) {
 }
 
 TEST(phase11_drop_missing_view_errors) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    drop view nope_v;\n"
         "    return 0;\n"
@@ -1744,9 +1744,9 @@ TEST(phase11_drop_missing_view_errors) {
 }
 
 TEST(phase11_create_view_missing_table_errors) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create view v8_v as select id from nope_t;\n"
         "    return 0;\n"
@@ -1756,9 +1756,9 @@ TEST(phase11_create_view_missing_table_errors) {
 }
 
 TEST(phase11_insert_into_view_errors) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table v9_t (id int);\n"
         "    create view v9_v as select id from v9_t;\n"
@@ -1771,9 +1771,9 @@ TEST(phase11_insert_into_view_errors) {
 }
 
 TEST(phase11_update_view_errors) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table v10_t (id int);\n"
         "    insert into v10_t values (1);\n"
@@ -1787,9 +1787,9 @@ TEST(phase11_update_view_errors) {
 }
 
 TEST(phase11_delete_view_errors) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table v11_t (id int);\n"
         "    insert into v11_t values (1);\n"
@@ -1803,9 +1803,9 @@ TEST(phase11_delete_view_errors) {
 }
 
 TEST(phase11_drop_table_on_view_errors) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table v12_t (id int);\n"
         "    insert into v12_t values (5);\n"
@@ -1818,7 +1818,7 @@ TEST(phase11_drop_table_on_view_errors) {
     ASSERT_INT_EQ(1, output_contains(out, "view"));
 
     /* The failed DROP TABLE must not have corrupted the view. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    int n = -1;\n"
         "    select count(*) into n from v12_v;\n"
@@ -1831,9 +1831,9 @@ TEST(phase11_drop_table_on_view_errors) {
 }
 
 TEST(phase11_drop_view_on_table_errors) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table v13_t (id int);\n"
         "    insert into v13_t values (9);\n"
@@ -1845,7 +1845,7 @@ TEST(phase11_drop_view_on_table_errors) {
     ASSERT_INT_EQ(1, output_contains(out, "table"));
 
     /* The failed DROP VIEW must not have harmed the table. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    int n = -1;\n"
         "    select count(*) into n from v13_t;\n"
@@ -1858,9 +1858,9 @@ TEST(phase11_drop_view_on_table_errors) {
 }
 
 TEST(phase11_create_view_duplicate_name_errors) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table v14_t (id int);\n"
         "    create view v14_v as select id from v14_t;\n"
@@ -1872,9 +1872,9 @@ TEST(phase11_create_view_duplicate_name_errors) {
 }
 
 TEST(phase11_create_view_on_table_name_errors) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table v15_t (id int);\n"
         "    create view v15_t as select id from v15_t;\n"
@@ -1885,9 +1885,9 @@ TEST(phase11_create_view_on_table_name_errors) {
 }
 
 TEST(phase11_view_over_view) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table v16_t (id int, qty int);\n"
         "    insert into v16_t values (1, 10);\n"
@@ -1915,9 +1915,9 @@ TEST(phase11_view_over_view) {
 /* -------------------------------------------------------------------------- */
 
 TEST(phase11_join_with_view_on_the_right) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table vj1_l (id int, name string);\n"
         "    create table vj1_r (id int, tag string);\n"
@@ -1944,9 +1944,9 @@ TEST(phase11_join_with_view_on_the_right) {
 }
 
 TEST(phase11_join_with_view_on_the_left_and_both_sides) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table vj2_l (id int, name string);\n"
         "    create table vj2_r (id int, tag string);\n"
@@ -1973,9 +1973,9 @@ TEST(phase11_join_with_view_on_the_left_and_both_sides) {
 /* The view's own WHERE has to apply before the join sees its rows, and the
    outer WHERE after - the same composition the single-source path gives. */
 TEST(phase11_join_with_filtered_view_composes_clauses) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table vj3_l (id int, name string);\n"
         "    create table vj3_r (id int, tag string, qty int);\n"
@@ -2004,9 +2004,9 @@ TEST(phase11_join_with_filtered_view_composes_clauses) {
 /* Views over views resolve recursively, so nesting one inside a join target
    works without the join path knowing about it. */
 TEST(phase11_join_with_view_over_view) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table vj4_l (id int, name string);\n"
         "    create table vj4_r (id int, tag string);\n"
@@ -2030,9 +2030,9 @@ TEST(phase11_join_with_view_over_view) {
    table, including when the view produces nothing at all - the case where the
    view has no rows to take a column shape from. */
 TEST(phase11_left_join_with_view_keeps_unmatched_rows) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table vj5_l (id int, name string);\n"
         "    create table vj5_r (id int, tag string);\n"
@@ -2065,9 +2065,9 @@ TEST(phase11_left_join_with_view_keeps_unmatched_rows) {
    Two levels of join in one statement, neither of which the join loop knows
    about. */
 TEST(phase11_join_with_view_built_from_a_join) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table vj7_o (id int, cust int);\n"
         "    create table vj7_c (id int, name string);\n"
@@ -2083,7 +2083,7 @@ TEST(phase11_join_with_view_built_from_a_join) {
         out, sizeof(out));
     ASSERT_INT_EQ(0, rc);
 
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    int n = -1;\n"
         "    select count(*) into n from vj7_v;\n"
@@ -2107,9 +2107,9 @@ TEST(phase11_join_with_view_built_from_a_join) {
    same program died with a stack-underflow "unknown error", which is what
    this test used to observe here. */
 TEST(phase11_join_with_dropped_view_matches_missing_table) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table vj6_l (id int, name string);\n"
         "    create table vj6_r (id int, tag string);\n"
@@ -2122,7 +2122,7 @@ TEST(phase11_join_with_dropped_view_matches_missing_table) {
     ASSERT_INT_EQ(0, rc);
 
     /* The view still resolves as a join target while it exists. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    int n = -1;\n"
         "    select count(*) into n from vj6_l join vj6_v on vj6_l.id = vj6_v.id;\n"
@@ -2135,7 +2135,7 @@ TEST(phase11_join_with_dropped_view_matches_missing_table) {
 
     /* After DROP VIEW the join yields no rows and the loop is a no-op, the
        same as a name that never existed. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    drop view vj6_v;\n"
         "    for row in select vj6_l.id from vj6_l join vj6_v on vj6_l.id = vj6_v.id {\n"
@@ -2147,7 +2147,7 @@ TEST(phase11_join_with_dropped_view_matches_missing_table) {
     ASSERT_INT_EQ(0, rc);
     ASSERT_INT_EQ(0, output_contains(out, "unreachable"));
 
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    for row in select vj6_l.id from vj6_l join vj6_never on vj6_l.id = vj6_never.id {\n"
         "        print \"unreachable\";\n"
@@ -2164,9 +2164,9 @@ TEST(phase11_join_with_dropped_view_matches_missing_table) {
 /* -------------------------------------------------------------------------- */
 
 TEST(phase11_bool_column_end_to_end) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table bc_t (id int, active bool, label string);\n"
         "    insert into bc_t values (1, true, \"alice\");\n"
@@ -2193,9 +2193,9 @@ TEST(phase11_bool_column_end_to_end) {
 /* The runtime reaches the custom engine through its driver, so a bool has to
    survive both a typed SELECT INTO and a row field read. */
 TEST(phase11_bool_column_reads_into_bool_variables) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table bv_t (id int, active bool, seen bool default false);\n"
         "    insert into bv_t values (1, true, true);\n"
@@ -2206,7 +2206,7 @@ TEST(phase11_bool_column_reads_into_bool_variables) {
     ASSERT_INT_EQ(0, rc);
 
     /* Second process: the table is in the catalog, so a row loop compiles. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc bstr(b bool) -> string {\n"
         "    if b {\n"
         "        return \"t\";\n"
@@ -2234,9 +2234,9 @@ TEST(phase11_bool_column_reads_into_bool_variables) {
 /* A bool column rides the int key space in the index, so false and true stay
    distinct keys and an indexed lookup agrees with the scan it replaces. */
 TEST(phase11_bool_column_index_and_persistence) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table bi_t (id int, active bool not null);\n"
         "    insert into bi_t values (1, true);\n"
@@ -2249,7 +2249,7 @@ TEST(phase11_bool_column_index_and_persistence) {
     ASSERT_INT_EQ(0, rc);
 
     /* A new process reloads the catalog, so this also covers the V6 page. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    int t = -1;\n"
         "    select count(*) into t from bi_t where active = true;\n"
@@ -2270,9 +2270,9 @@ TEST(phase11_bool_column_index_and_persistence) {
 /* -------------------------------------------------------------------------- */
 
 TEST(phase11_date_and_timestamp_columns_end_to_end) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table dt_t (id int, day date, at timestamp);\n"
         "    insert into dt_t values (1, \"2024-03-01\", \"2024-03-01 09:30:00\");\n"
@@ -2294,9 +2294,9 @@ TEST(phase11_date_and_timestamp_columns_end_to_end) {
 /* A date column has to read back as a date, not as text that looks like one:
    to_char only accepts a date or timestamp, so it is the assertion. */
 TEST(phase11_date_columns_read_into_date_variables) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table dv_t (id int, day date, at timestamp);\n"
         "    insert into dv_t values (1, \"2024-03-01\", \"2024-03-01 09:30:00\");\n"
@@ -2306,7 +2306,7 @@ TEST(phase11_date_columns_read_into_date_variables) {
         out, sizeof(out));
     ASSERT_INT_EQ(0, rc);
 
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    date d = current_date();\n"
         "    select day into d from dv_t where id = 2;\n"
@@ -2330,9 +2330,9 @@ TEST(phase11_date_columns_read_into_date_variables) {
 }
 
 TEST(phase11_date_column_rejects_text_that_is_not_a_date) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table dr_t (id int, day date);\n"
         "    insert into dr_t values (1, \"tomorrow\");\n"
@@ -2357,9 +2357,9 @@ TEST(phase11_date_column_rejects_text_that_is_not_a_date) {
    the pop and underflowed the stack - reported only as "unknown error",
    because that path returns without setting a message. */
 TEST(phase11_sql_loop_over_empty_result_is_a_no_op) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table el_t (id int, name string);\n"
         "    create table el_empty (id int);\n"
@@ -2370,7 +2370,7 @@ TEST(phase11_sql_loop_over_empty_result_is_a_no_op) {
         out, sizeof(out));
     ASSERT_INT_EQ(0, rc);
 
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    print \"before\";\n"
         "    for row in select id from el_empty {\n"
@@ -2400,9 +2400,9 @@ TEST(phase11_sql_loop_over_empty_result_is_a_no_op) {
 /* Locals declared before the loop must survive it, whether or not the body
    ran: an unbalanced iterator slot would shift every slot below it. */
 TEST(phase11_sql_loop_leaves_surrounding_locals_intact) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table ls_t (id int);\n"
         "    create table ls_empty (id int);\n"
@@ -2413,7 +2413,7 @@ TEST(phase11_sql_loop_leaves_surrounding_locals_intact) {
         out, sizeof(out));
     ASSERT_INT_EQ(0, rc);
 
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    int total = 100;\n"
         "    string label = \"kept\";\n"
@@ -2436,9 +2436,9 @@ TEST(phase11_sql_loop_leaves_surrounding_locals_intact) {
 /* break and continue emit their own pops for the iterator slot, so moving
    where it is pushed has to keep both balanced. */
 TEST(phase11_sql_loop_break_and_continue_stay_balanced) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table bc_loop (id int);\n"
         "    insert into bc_loop values (1);\n"
@@ -2449,7 +2449,7 @@ TEST(phase11_sql_loop_break_and_continue_stay_balanced) {
         out, sizeof(out));
     ASSERT_INT_EQ(0, rc);
 
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    int marker = 9;\n"
         "    int seen = 0;\n"
@@ -2480,11 +2480,11 @@ TEST(phase11_sql_loop_break_and_continue_stay_balanced) {
 
 
 /* A SQL loop variable reads the current row whatever it is named; only `row`
- * used to work (examples/inventory.mypl, migration.mypl and todo.mypl). */
+ * used to work (examples/inventory.apx, migration.apx and todo.apx). */
 TEST(phase11_named_sql_loop_variable_reads_fields) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table nl_t (id int, name string);\n"
         "    insert into nl_t values (1, \"alpha\");\n"
@@ -2495,7 +2495,7 @@ TEST(phase11_named_sql_loop_variable_reads_fields) {
     ASSERT_INT_EQ(0, rc);
 
     /* New process, so the table is in the catalog at compile time. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    int total = 0;\n"
         "    for item in select id, name from nl_t order by id {\n"
@@ -2510,7 +2510,7 @@ TEST(phase11_named_sql_loop_variable_reads_fields) {
     ASSERT_INT_EQ(1, output_contains(out, "name=alpha\nname=beta\ntotal=3"));
 
     /* Columns are still checked against the query. */
-    rc = run_mypl(
+    rc = run_auspex(
         "proc main() -> int {\n"
         "    for item in select name from nl_t {\n"
         "        print item.id;\n"
@@ -2520,15 +2520,15 @@ TEST(phase11_named_sql_loop_variable_reads_fields) {
         out, sizeof(out));
     ASSERT_INT_EQ(1, rc);
     ASSERT_INT_EQ(1, output_contains(out, "Unknown column 'id' for row variable 'item'"));
-    remove("mypl.db");
+    remove("auspex.db");
 }
 
 /* Issue #51: a row loop over a table the same program creates. The table is
    not in the catalog at compile time, so its columns resolve at runtime. */
 TEST(phase11_row_loop_over_table_created_in_same_program) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    create table same_t (id int, name string);\n"
         "    insert into same_t values (1, 'alpha');\n"
@@ -2544,13 +2544,13 @@ TEST(phase11_row_loop_over_table_created_in_same_program) {
         out, sizeof(out));
     ASSERT_INT_EQ(0, rc);
     ASSERT_INT_EQ(1, output_contains(out, "name=alpha\nname=beta\ntotal=3"));
-    remove("mypl.db");
+    remove("auspex.db");
 }
 
 TEST(phase11_row_loop_over_table_created_by_proc_defined_after_main) {
-    remove("mypl.db");
+    remove("auspex.db");
     char out[512];
-    int rc = run_mypl(
+    int rc = run_auspex(
         "proc main() -> int {\n"
         "    setup();\n"
         "    for item in select id from later_t {\n"
@@ -2566,7 +2566,7 @@ TEST(phase11_row_loop_over_table_created_by_proc_defined_after_main) {
         out, sizeof(out));
     ASSERT_INT_EQ(0, rc);
     ASSERT_INT_EQ(1, output_contains(out, "7"));
-    remove("mypl.db");
+    remove("auspex.db");
 }
 
 int main(void) {

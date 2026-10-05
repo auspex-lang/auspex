@@ -1,6 +1,6 @@
 // Phase 8 example: stored code, AUTHID, savepoints, and autonomous transactions.
 // Run with a SQLite database, e.g.:
-//   ./bin/mypl examples/phase8.mypl --db /tmp/phase8.db
+//   ./bin/auspex examples/phase8.apx --db /tmp/phase8.db
 // smoke: requires sqlite
 // smoke: args --db phase8.db
 

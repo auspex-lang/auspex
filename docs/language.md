@@ -1,4 +1,4 @@
-# The MyPL language
+# The Auspex language
 
 A tour of the language from top to bottom. For the SQL backends and their
 capabilities, see [engines.md](engines.md); runnable versions of everything
@@ -7,7 +7,7 @@ below live in [examples/](../examples/).
 
 ### Procedures and functions
 
-```mypl
+```auspex
 proc greet(name string) -> int {
     print concat("Hello, ", name);
     return 0;
@@ -20,7 +20,7 @@ func square(x int) -> int {
 
 ### Variables and types
 
-```mypl
+```auspex
 int count = 42;
 float pi = 3.14;
 string message = "hello";
@@ -33,7 +33,7 @@ map<string, int> ages = {"alice": 30, "bob": 25};
 
 ### Parameter modes
 
-```mypl
+```auspex
 proc swap(in out a int, in out b int) -> int {
     int tmp = a;
     a = b;
@@ -44,7 +44,7 @@ proc swap(in out a int, in out b int) -> int {
 
 ### Control flow
 
-```mypl
+```auspex
 int i = 0;
 while i < 10 {
     print(int_to_string(i));
@@ -58,7 +58,7 @@ for n in range(1, 5) {
 
 ### Embedded SQL
 
-```mypl
+```auspex
 create table users (
     id int primary key,
     name string,
@@ -75,17 +75,17 @@ for user in select id, name from users where age > 25 and active = true {
 
 Column types are `int`, `float`, `string`, `bool`, `date` and `timestamp`. A
 `bool` column takes the `true` and `false` literals and reads back into a `bool`
-variable; see `examples/bool_columns.mypl`. A `date` or `timestamp` column is
+variable; see `examples/bool_columns.apx`. A `date` or `timestamp` column is
 written as a string literal in canonical form — `"YYYY-MM-DD"`, or that plus
 `" HH:MM:SS"`, which is what `to_date`, `current_date` and `current_timestamp`
 produce — and reads back into a `date` or `timestamp` variable, so `to_char`
 accepts it. Anything else is refused at write time. Because the text is fixed
 width, `ORDER BY`, range comparisons and indexes are chronological; see
-`examples/date_columns.mypl`.
+`examples/date_columns.apx`.
 
 ### SELECT INTO
 
-```mypl
+```auspex
 string name = "";
 int age = 0;
 SELECT name, age INTO name, age FROM users WHERE id = 1;
@@ -94,7 +94,7 @@ print concat(name, concat(" is ", int_to_string(age)));
 
 Load an entire result set into an `array<row>`:
 
-```mypl
+```auspex
 array<row> users = [];
 SELECT * INTO users FROM users;
 print length(users);
@@ -103,7 +103,7 @@ print users[0].name;
 
 ### Cursors
 
-```mypl
+```auspex
 cursor c is select id, name from users where age > 25;
 open c;
 while c%found {
@@ -122,7 +122,7 @@ per affected row with `:new` / `:old` row context. Trigger definitions
 persist in the database and survive restarts, and they fire on dynamic SQL
 (`execute_immediate`, `dbms_sql.execute`) too.
 
-```mypl
+```auspex
 // Statement level: audit every insert into orders.
 trigger orders_audit before insert on orders {
     dbms_output.put_line("insert into orders");
@@ -150,7 +150,7 @@ Persistent sequences work like Oracle's: `create_sequence`, `nextval`,
 `currval`, and `drop_sequence`, with the current value stored in the
 database catalog so they continue across process restarts.
 
-```mypl
+```auspex
 create_sequence("order_seq", 1000, 1);
 insert into orders values (nextval("order_seq"), "alice", 42);
 print int_to_string(currval("order_seq"));
@@ -162,7 +162,7 @@ The custom engine supports `create view` / `drop view`; a view stores its
 `SELECT` and resolves recursively, so it composes with an outer `WHERE`,
 `ORDER BY`, and `LIMIT`. Views are read-only.
 
-```mypl
+```auspex
 create view big_orders as select id, total from orders where total > 100;
 for o in select id from big_orders order by total desc limit 5 {
     print int_to_string(o.id);
@@ -183,7 +183,7 @@ and `LIKE`.
 `dbms_sql` offers a cursor-style API for dynamic SQL with bind variables,
 and `utl_file` wraps host files (append/seek/flush, mkdir/remove):
 
-```mypl
+```auspex
 int c = dbms_sql.open_cursor();
 dbms_sql.parse(c, "insert into orders values (?1, ?2, ?3)");
 dbms_sql.bind_variable(c, "1", 7);
@@ -205,9 +205,9 @@ PL/SQL's `UTL_FILE` does, so a reader can loop until that is caught.
 
 `external_call` invokes a C function from a shared library via
 `dlopen`/`dlsym` (`LoadLibrary`/`GetProcAddress` on Windows). The native name selects the C return type; the argument's
-C type follows its MyPL runtime type (`int`, `float`, or `string`):
+C type follows its Auspex runtime type (`int`, `float`, or `string`):
 
-```mypl
+```auspex
 // double sqrt(double) from libm
 float root = external_call_float("libm.so.6", "sqrt", 2.0);
 // size_t strlen(const char*) from libc — int return
@@ -224,7 +224,7 @@ literal; the compiler checks the arguments against it and gives the call its
 return type. It has to match the C prototype exactly: `i` is a C `int`, so a
 `long` or `size_t` parameter is not one.
 
-```mypl
+```auspex
 // double pow(double, double)
 float p = external_call_sig("libm.so.6", "pow", "d(dd)", 2.0, 10.0);
 // double ldexp(double, int)
@@ -235,7 +235,7 @@ int order = external_call_sig("libc.so.6", "strcmp", "i(ss)", "apple", "banana")
 
 ### Collections
 
-```mypl
+```auspex
 array<int> nums;
 nums.extend(3);
 nums[0] = 10;
@@ -251,7 +251,7 @@ print int_to_string(scores["ada"]);
 
 ### Type attributes and subtypes
 
-```mypl
+```auspex
 // %TYPE copies a variable or column type
 int x = 42;
 x%type y = 7;
@@ -270,7 +270,7 @@ print u.name;
 
 ### Exceptions
 
-```mypl
+```auspex
 proc maybe_fetch() -> int {
     int id;
     begin
@@ -284,7 +284,7 @@ proc maybe_fetch() -> int {
 
 ### Packages
 
-```mypl
+```auspex
 package math_utils is
     func add(a int, b int) -> int;
 end math_utils;
@@ -301,7 +301,7 @@ end math_utils;
 Use line-oriented directives to include code for selected builds. Flags can be
 defined in source with `$define` or supplied when running a file with `-DNAME`:
 
-```mypl
+```auspex
 proc main() -> int {
 $if DEBUG $then
     print "debug logging enabled";
@@ -313,20 +313,20 @@ $end
 ```
 
 ```bash
-./bin/mypl -DDEBUG program.mypl
-./bin/mypl -DDEBUG -DTRACE program.mypl
+./bin/auspex -DDEBUG program.apx
+./bin/auspex -DDEBUG -DTRACE program.apx
 ```
 
 Command-line flags are boolean, may be repeated, and apply to the input file
 and its imported modules. Use `$undefine NAME` within a source file to disable
 a flag for the rest of that compilation unit.
 
-One flag names the platform MyPL runs on: `PLATFORM_LINUX`, `PLATFORM_MACOS`
+One flag names the platform Auspex runs on: `PLATFORM_LINUX`, `PLATFORM_MACOS`
 or `PLATFORM_WINDOWS`, plus `PLATFORM_POSIX` on Linux and macOS. They are
 always defined, which lets a program choose, for instance, the library
 `external_call` loads:
 
-```mypl
+```auspex
 $if PLATFORM_WINDOWS $then
     string libc = "msvcrt.dll";
 $elsif PLATFORM_MACOS $then
@@ -342,7 +342,7 @@ $end
 Start an interactive session:
 
 ```bash
-./bin/mypl
+./bin/auspex
 ```
 
 Useful commands:
@@ -362,7 +362,7 @@ The tour above covers the highlights; the rest of the language is a short
 list:
 
 - `struct` records and object types with methods
-  (`examples/phases/phase10_object_types.mypl`).
+  (`examples/phases/phase10_object_types.apx`).
 - `case` statements, `do ... while`, and numeric `for` loops.
 - Anonymous `declare ... begin ... end;` blocks.
 - `BULK COLLECT INTO` and `FORALL` for set-based fetching and DML.

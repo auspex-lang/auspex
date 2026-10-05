@@ -1,10 +1,10 @@
-// Helper module for phase12_import_packages.mypl — a package with
+// Helper module for phase12_import_packages.apx — a package with
 // package-level state declared in an imported module. Before Phase 12 the
 // initializer (counter = 41) never ran for imported modules, so get()
 // returned the zero value instead of 41.
 //
 // Not a standalone program: it lives in examples/modules/ so the examples
-// runner (which globs only examples/*.mypl) doesn't try to execute it.
+// runner (which globs only examples/*.apx) doesn't try to execute it.
 package counter is
     counter int;
     func get() -> int;

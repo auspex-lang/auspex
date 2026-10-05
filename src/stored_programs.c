@@ -19,7 +19,7 @@ typedef struct {
 
 #ifdef USE_SQLITE
 static const char* PROGRAM_UNITS_TABLE =
-    "CREATE TABLE IF NOT EXISTS _mypl_program_units ("
+    "CREATE TABLE IF NOT EXISTS _auspex_program_units ("
     "    name TEXT NOT NULL,"
     "    unit_type TEXT NOT NULL,"
     "    source_text TEXT NOT NULL,"
@@ -296,7 +296,7 @@ static int parse_unit(const char* start, const char** out_end, ProgramUnit* unit
 
     *out_end = p;
 
-    /* Strip the authid clause from the stored source so it remains valid MyPL. */
+    /* Strip the authid clause from the stored source so it remains valid Auspex. */
     if (authid_clause_start != NULL && authid_clause_end != NULL) {
         size_t prefix_len = (size_t)(authid_clause_start - start);
         size_t suffix_len = (size_t)(p - authid_clause_end);
@@ -389,7 +389,7 @@ static char* sqlite_load_source(DBDriver* driver) {
     sqlite3* db = ((SQLiteImpl*)driver->impl)->db;
     sqlite3_stmt* check = NULL;
     if (sqlite3_prepare_v2(db,
-                           "SELECT name FROM sqlite_master WHERE type='table' AND name='_mypl_program_units'",
+                           "SELECT name FROM sqlite_master WHERE type='table' AND name='_auspex_program_units'",
                            -1, &check, NULL) != SQLITE_OK) {
         return NULL;
     }
@@ -398,7 +398,7 @@ static char* sqlite_load_source(DBDriver* driver) {
     if (!exists) return NULL;
 
     sqlite3_stmt* stmt = NULL;
-    const char* sql = "SELECT source_text FROM _mypl_program_units ORDER BY rowid";
+    const char* sql = "SELECT source_text FROM _auspex_program_units ORDER BY rowid";
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
         return NULL;
     }
@@ -469,7 +469,7 @@ static int sqlite_save_source(DBDriver* driver, Context* ctx, const char* source
 
     sqlite3_stmt* stmt = NULL;
     const char* sql =
-        "INSERT INTO _mypl_program_units (name, unit_type, source_text, authid) "
+        "INSERT INTO _auspex_program_units (name, unit_type, source_text, authid) "
         "VALUES (?1, ?2, ?3, ?4) "
         "ON CONFLICT(name, unit_type) DO UPDATE SET "
         "source_text = excluded.source_text, authid = excluded.authid";
@@ -526,17 +526,33 @@ static void str_toupper(char* dest, const char* src, size_t size) {
     dest[i] = '\0';
 }
 
+#define UNIT_MARKER "// __AUSPEX_PROGRAM_UNIT__ "
+/* Written by MyPL; still read until v0.4.0. */
+#define LEGACY_UNIT_MARKER "// __MYPL_PROGRAM_UNIT__ "
+
+/* The first unit marker (current or legacy) at or after p; its length goes
+   to *len. NULL when there is none. */
+static const char* find_unit_marker(const char* p, size_t* len) {
+    const char* m = strstr(p, UNIT_MARKER);
+    const char* legacy = strstr(p, LEGACY_UNIT_MARKER);
+    if (legacy != NULL && (m == NULL || legacy < m)) {
+        *len = strlen(LEGACY_UNIT_MARKER);
+        return legacy;
+    }
+    *len = strlen(UNIT_MARKER);
+    return m;
+}
+
 static int parse_sidecar(const char* data, ProgramUnit** out_units, int* out_count) {
     *out_units = NULL;
     *out_count = 0;
     int cap = 0;
 
-    const char* marker = "// __MYPL_PROGRAM_UNIT__ ";
-    size_t mlen = strlen(marker);
+    size_t mlen = 0;
     const char* p = data;
 
     while (*p != '\0') {
-        const char* m = strstr(p, marker);
+        const char* m = find_unit_marker(p, &mlen);
         if (m == NULL) break;
 
         const char* line_end = strchr(m, '\n');
@@ -587,7 +603,8 @@ static int parse_sidecar(const char* data, ProgramUnit** out_units, int* out_cou
         }
 
         const char* body_start = line_end;
-        const char* next = strstr(body_start, marker);
+        size_t next_len = 0;
+        const char* next = find_unit_marker(body_start, &next_len);
         const char* body_end = next ? next : (body_start + strlen(body_start));
         while (body_end > body_start &&
                (*(body_end - 1) == '\n' || *(body_end - 1) == '\r')) {
@@ -636,10 +653,10 @@ static void write_unit(FILE* f, const ProgramUnit* unit) {
     if (unit->authid != NULL && unit->authid[0] != '\0') {
         char authid_upper[256];
         str_toupper(authid_upper, unit->authid, sizeof(authid_upper));
-        fprintf(f, "// __MYPL_PROGRAM_UNIT__ %s %s AUTHID %s\n%s\n",
+        fprintf(f, UNIT_MARKER "%s %s AUTHID %s\n%s\n",
                 unit->type, unit->name, authid_upper, unit->source);
     } else {
-        fprintf(f, "// __MYPL_PROGRAM_UNIT__ %s %s\n%s\n",
+        fprintf(f, UNIT_MARKER "%s %s\n%s\n",
                 unit->type, unit->name, unit->source);
     }
 }
@@ -873,7 +890,7 @@ static int sqlite_drop_unit(DBDriver* driver, const char* name, const char* type
     sqlite3* db = ((SQLiteImpl*)driver->impl)->db;
     sqlite3_stmt* check = NULL;
     if (sqlite3_prepare_v2(db,
-                           "SELECT name FROM sqlite_master WHERE type='table' AND name='_mypl_program_units'",
+                           "SELECT name FROM sqlite_master WHERE type='table' AND name='_auspex_program_units'",
                            -1, &check, NULL) != SQLITE_OK) {
         return 0;
     }
@@ -883,7 +900,7 @@ static int sqlite_drop_unit(DBDriver* driver, const char* name, const char* type
 
     sqlite3_stmt* stmt = NULL;
     const char* sql =
-        "DELETE FROM _mypl_program_units WHERE name = ?1 COLLATE NOCASE AND unit_type = ?2";
+        "DELETE FROM _auspex_program_units WHERE name = ?1 COLLATE NOCASE AND unit_type = ?2";
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
         snprintf(driver->error_message, sizeof(driver->error_message), "%s",
                  sqlite3_errmsg(db));

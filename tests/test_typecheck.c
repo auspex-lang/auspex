@@ -299,7 +299,7 @@ TEST(typecheck_accepts_empty_array_return_with_hint) {
 }
 
 TEST(typecheck_resolves_sql_row_field_type) {
-    char db_path[] = "/tmp/mypl_test_typecheck_sql_XXXXXX.db";
+    char db_path[] = "/tmp/auspex_test_typecheck_sql_XXXXXX.db";
     int fd = mkstemp(db_path);
     if (fd >= 0) close(fd);
     unlink(db_path);
@@ -326,7 +326,7 @@ TEST(typecheck_resolves_sql_row_field_type) {
 }
 
 TEST(typecheck_rejects_sql_row_field_type_mismatch) {
-    char db_path[] = "/tmp/mypl_test_typecheck_sql2_XXXXXX.db";
+    char db_path[] = "/tmp/auspex_test_typecheck_sql2_XXXXXX.db";
     int fd = mkstemp(db_path);
     if (fd >= 0) close(fd);
     unlink(db_path);
@@ -353,7 +353,7 @@ TEST(typecheck_rejects_sql_row_field_type_mismatch) {
 }
 
 TEST(typecheck_rejects_row_field_not_selected) {
-    char db_path[] = "/tmp/mypl_test_typecheck_sql3_XXXXXX.db";
+    char db_path[] = "/tmp/auspex_test_typecheck_sql3_XXXXXX.db";
     int fd = mkstemp(db_path);
     if (fd >= 0) close(fd);
     unlink(db_path);
@@ -380,7 +380,7 @@ TEST(typecheck_rejects_row_field_not_selected) {
 }
 
 TEST(typecheck_accepts_row_field_with_select_star) {
-    char db_path[] = "/tmp/mypl_test_typecheck_sql4_XXXXXX.db";
+    char db_path[] = "/tmp/auspex_test_typecheck_sql4_XXXXXX.db";
     int fd = mkstemp(db_path);
     if (fd >= 0) close(fd);
     unlink(db_path);
@@ -415,7 +415,7 @@ TEST(typecheck_rejects_field_on_undefined_variable) {
 }
 
 /* The loop variable of `for x in select` is a row whatever it is named;
- * only `row` used to be accepted (examples/inventory.mypl uses `p`). */
+ * only `row` used to be accepted (examples/inventory.apx uses `p`). */
 TEST(typecheck_accepts_named_row_variable_field) {
     char error[256];
     Program* program = parse(
@@ -427,7 +427,7 @@ TEST(typecheck_accepts_named_row_variable_field) {
 }
 
 TEST(typecheck_resolves_named_row_variable_field_type) {
-    char db_path[] = "/tmp/mypl_test_typecheck_sql5_XXXXXX.db";
+    char db_path[] = "/tmp/auspex_test_typecheck_sql5_XXXXXX.db";
     int fd = mkstemp(db_path);
     if (fd >= 0) close(fd);
     unlink(db_path);
@@ -769,7 +769,7 @@ TEST(typecheck_rejects_clamp_string) {
 /* Typechecks `source` against an open, empty catalog. Returns typecheck's
  * result and leaves the message in `error`. */
 static int typecheck_against_empty_catalog(const char* source, char* error, size_t error_size) {
-    char db_path[] = "/tmp/mypl_test_typecheck_same_prog_XXXXXX.db";
+    char db_path[] = "/tmp/auspex_test_typecheck_same_prog_XXXXXX.db";
     int fd = mkstemp(db_path);
     if (fd >= 0) close(fd);
     unlink(db_path);
@@ -874,7 +874,7 @@ TEST(typecheck_still_rejects_row_loop_over_table_nothing_creates) {
 TEST(typecheck_still_checks_catalog_table_when_program_creates_other_tables) {
     /* A table that exists in the catalog and is NOT created by the program
        keeps strict checking, even when the program creates other tables. */
-    char db_path[] = "/tmp/mypl_test_typecheck_same_prog2_XXXXXX.db";
+    char db_path[] = "/tmp/auspex_test_typecheck_same_prog2_XXXXXX.db";
     int fd = mkstemp(db_path);
     if (fd >= 0) close(fd);
     unlink(db_path);

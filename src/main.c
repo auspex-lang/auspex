@@ -29,7 +29,7 @@ static void print_usage(const char* program) {
 }
 
 static void print_version(void) {
-    printf("MyPL 0.1.0\n");
+    printf("Auspex 0.2.0\n");
 }
 
 static void replace_with_filtered(char** loaded, const char* source) {
@@ -49,7 +49,7 @@ static int run_file(const char* path, DBDriver* driver, const CompileOptions* op
     Context* ctx = NULL;
     Context custom_ctx;
     if (driver != NULL && !driver->is_sqlite) {
-        custom_ctx.db_path = "mypl.db";
+        custom_ctx.db_path = default_db_path();
         custom_ctx.pager = NULL;
         ctx = &custom_ctx;
     }
@@ -174,7 +174,7 @@ static int run_file(const char* path, DBDriver* driver, const CompileOptions* op
 
 static int valid_conditional_flag(const char* name) {
     size_t len = name != NULL ? strlen(name) : 0;
-    if (len == 0 || len >= MYPL_CC_FLAG_NAME_MAX) return 0;
+    if (len == 0 || len >= AUSPEX_CC_FLAG_NAME_MAX) return 0;
     for (size_t i = 0; i < len; i++) {
         char c = name[i];
         if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
@@ -197,7 +197,7 @@ int main(int argc, char** argv) {
 
     const char* file = NULL;
     const char* db_path = NULL;
-    const char* conditional_flags[MYPL_CC_MAX_FLAGS];
+    const char* conditional_flags[AUSPEX_CC_MAX_FLAGS];
     int conditional_flag_count = 0;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--db") == 0) {
@@ -222,9 +222,9 @@ int main(int argc, char** argv) {
                 }
             }
             if (!duplicate) {
-                if (conditional_flag_count >= MYPL_CC_MAX_FLAGS) {
+                if (conditional_flag_count >= AUSPEX_CC_MAX_FLAGS) {
                     fprintf(stderr, "Too many conditional-compilation flags (maximum %d)\n",
-                            MYPL_CC_MAX_FLAGS);
+                            AUSPEX_CC_MAX_FLAGS);
                     return 1;
                 }
                 conditional_flags[conditional_flag_count++] = name;
@@ -256,7 +256,8 @@ int main(int argc, char** argv) {
 #ifdef USE_SQLITE
         sqlite_driver_init(&driver);
         if (!driver.open(&driver, db_path)) {
-            fprintf(stderr, "Could not open database: %s\n", db_path);
+            fprintf(stderr, "Could not open database: %s\n",
+                    driver.error_message[0] != '\0' ? driver.error_message : db_path);
             return 1;
         }
         driver_open = 1;
@@ -266,8 +267,8 @@ int main(int argc, char** argv) {
 #endif
     } else if (file != NULL) {  
         custom_driver_init(&driver);
-        if (!driver.open(&driver, "mypl.db")) {
-            fprintf(stderr, "Could not open database: mypl.db\n");
+        if (!driver.open(&driver, default_db_path())) {
+            fprintf(stderr, "Could not open database: %s\n", default_db_path());
             return 1;
         }
         driver_open = 1;

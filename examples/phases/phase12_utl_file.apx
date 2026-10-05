@@ -1,9 +1,9 @@
 // Phase 12: utl_file expansion — append, seek, flush, and directory ops.
-// Run with: ./bin/mypl examples/phase12_utl_file.mypl
+// Run with: ./bin/auspex examples/phase12_utl_file.apx
 // Writes in the current directory and cleans up after itself; prints "ok".
 
 proc main() -> int {
-    string path = "mypl_phase12_utl_example.txt";
+    string path = "auspex_phase12_utl_example.txt";
 
     // Write two lines, then append a third without truncating.
     int w = utl_file.fopen(path, "w");
@@ -32,7 +32,7 @@ proc main() -> int {
     utl_file.fclose(r);
 
     // Directory helpers: mkdir a scratch dir, write into it, remove both.
-    string dir = "mypl_phase12_utl_dir";
+    string dir = "auspex_phase12_utl_dir";
     if (utl_file.mkdir(dir) == 0) { } else { print "mkdir failed"; return 1; }
     int d = utl_file.fopen(concat(dir, "/f.txt"), "w");
     if (d < 0) { print "open dir file failed"; return 1; }
