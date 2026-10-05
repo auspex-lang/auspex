@@ -1,10 +1,24 @@
 name: Fuzz
 
+# PRs and pushes fuzz only when code the harnesses exercise changed; the
+# weekly schedule and manual runs always fuzz.
 on:
   pull_request:
     branches: [ main, develop ]
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'tests/fuzz/**'
+      - 'Makefile'
+      - '.github/workflows/fuzz.yml'
   push:
     branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'tests/fuzz/**'
+      - 'Makefile'
+      - '.github/workflows/fuzz.yml'
   schedule:
     - cron: '0 3 * * 1'
   workflow_dispatch:
