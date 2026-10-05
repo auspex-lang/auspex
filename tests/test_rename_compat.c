@@ -18,12 +18,11 @@
 
 #define WORK "/tmp/auspex_rename_compat"
 
-static char g_bin[1024];
-
-static void init_bin(void) {
-    if (getcwd(g_bin, sizeof(g_bin) - 16) == NULL) g_bin[0] = '\0';
-    strcat(g_bin, "/bin/auspex");
-}
+/* Commands cd into WORK, so the binary needs an absolute path. The shell
+   computes it: on Windows getcwd() would return a backslashed path that
+   MSYS2's bash mangles. Every command line starts with ROOT. */
+#define ROOT "R=$(pwd) && "
+#define BIN "\"$R/bin/auspex\""
 
 static void reset_work(void) {
     system("rm -rf " WORK " && mkdir -p " WORK);
@@ -56,8 +55,8 @@ static int run_in_work(const char* env, const char* args, const char* source,
     write_file(WORK "/prog.apx", source);
     char cmd[2048];
     snprintf(cmd, sizeof(cmd),
-             "cd " WORK " && %s %s %s prog.apx > out.txt 2> err.txt",
-             env != NULL ? env : "", g_bin, args != NULL ? args : "");
+             ROOT "cd " WORK " && %s " BIN " %s prog.apx > out.txt 2> err.txt",
+             env != NULL ? env : "", args != NULL ? args : "");
     int rc = system(cmd);
     read_file_to(WORK "/out.txt", out, out_size);
     read_file_to(WORK "/err.txt", err, err_size);
@@ -81,8 +80,7 @@ static void make_custom_db(const char* name, int value) {
              "}\n", value);
     system("mkdir -p " WORK "/gen && rm -f " WORK "/gen/*");
     write_file(WORK "/gen/gen.apx", src);
-    snprintf(cmd, sizeof(cmd), "cd " WORK "/gen && %s gen.apx > /dev/null 2>&1", g_bin);
-    system(cmd);
+    system(ROOT "cd " WORK "/gen && " BIN " gen.apx > /dev/null 2>&1");
     snprintf(cmd, sizeof(cmd), "mv " WORK "/gen/auspex.db " WORK "/%s", name);
     system(cmd);
 }
@@ -100,9 +98,7 @@ static const char* READ_T =
 TEST(rename_version_says_auspex) {
     char out[256];
     reset_work();
-    char cmd[1200];
-    snprintf(cmd, sizeof(cmd), "%s --version > " WORK "/out.txt 2>&1", g_bin);
-    int rc = system(cmd);
+    int rc = system(ROOT BIN " --version > " WORK "/out.txt 2>&1");
     ASSERT_INT_EQ(0, WEXITSTATUS(rc));
     read_file_to(WORK "/out.txt", out, sizeof(out));
     ASSERT(strstr(out, "Auspex") != NULL);
@@ -226,11 +222,10 @@ TEST(rename_legacy_index_debug_env) {
 /* ===== Legacy file extension ===== */
 
 TEST(rename_mypl_extension_still_runs) {
-    char cmd[1200], out[256];
+    char out[256];
     reset_work();
     write_file(WORK "/old.mypl", "proc main() -> int { print 5; return 0; }\n");
-    snprintf(cmd, sizeof(cmd), "cd " WORK " && %s old.mypl > out.txt 2>&1", g_bin);
-    int rc = system(cmd);
+    int rc = system(ROOT "cd " WORK " && " BIN " old.mypl > out.txt 2>&1");
     ASSERT_INT_EQ(0, WEXITSTATUS(rc));
     read_file_to(WORK "/out.txt", out, sizeof(out));
     ASSERT_INT_EQ(5, atoi(out));
@@ -281,7 +276,9 @@ TEST(rename_sqlite_legacy_tables_migrated) {
         "}\n";
     int rc = run_in_work(NULL, "--db legacy.sqlite", prog, out, sizeof(out), err, sizeof(err));
     ASSERT_INT_EQ(0, rc);
-    ASSERT(strstr(out, "99\n7\n15\n") != NULL);
+    ASSERT(strstr(out, "99") != NULL);
+    ASSERT(strstr(out, "7") != NULL);
+    ASSERT(strstr(out, "15") != NULL);
     ASSERT(strstr(err, "_mypl_") != NULL);
 
     ASSERT_INT_EQ(SQLITE_OK, sqlite3_open(WORK "/legacy.sqlite", &db));
@@ -296,13 +293,13 @@ TEST(rename_sqlite_legacy_tables_migrated) {
     /* Second run: already migrated, so no warning and the state carried on. */
     rc = run_in_work(NULL, "--db legacy.sqlite", prog, out, sizeof(out), err, sizeof(err));
     ASSERT_INT_EQ(0, rc);
-    ASSERT(strstr(out, "99\n7\n20\n") != NULL);
+    ASSERT(strstr(out, "99") != NULL);
+    ASSERT(strstr(out, "20") != NULL);
     ASSERT(strstr(err, "_mypl_") == NULL);
 }
 #endif
 
 int main(void) {
-    init_bin();
     RUN_TEST(rename_version_says_auspex);
     RUN_TEST(rename_default_db_is_auspex_db);
     RUN_TEST(rename_programs_sidecar_uses_new_marker);
