@@ -17,6 +17,7 @@ graphify-out/
 # IDE
 .idea/
 .vscode/
+.serena/
 *.swp
 *.swo
 *~
