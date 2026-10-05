@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/hero.svg" alt="Auspex — a lightweight, open-source alternative to PL/SQL" width="860">
+  <img src="./assets/readme/hero.svg" width="100%" alt="Auspex — a lightweight, open-source alternative to PL/SQL. A procedure loops over select id, title from todos and prints 1: buy milk, 2: walk dog.">
 </p>
 
 <p align="center">

@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1200" height="420" viewBox="0 0 1200 420"
+     role="img" aria-labelledby="title desc">
+  <title id="title">Auspex — a lightweight, open-source alternative to PL/SQL</title>
+  <desc id="desc">The Auspex wordmark with a green block cursor beside a real Auspex procedure that loops over a SQL query, and the output it prints: 1: buy milk, 2: walk dog.</desc>
+
+  <defs>
+    <style>
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', 'Noto Sans Mono', monospace; }
+      .sans { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, 'Noto Sans', sans-serif; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="420" rx="24" fill="#0d1117"/>
+  <rect x="0.75" y="0.75" width="1198.5" height="418.5" rx="23.5" fill="none" stroke="#30363d" stroke-width="1.5"/>
+
+  <!-- Title block: category, name, promise, metadata -->
+  <g id="title-block" transform="translate(64 0)">
+    <text x="0" y="92" class="mono" font-size="18" letter-spacing="2" fill="#8b949e">PROCEDURAL SQL · C99 · BYTECODE VM</text>
+
+    <text x="-4" y="196" class="mono" font-size="104" font-weight="800" letter-spacing="-2" fill="#f0f6fc">Auspex</text>
+    <rect x="372" y="122" width="44" height="76" fill="#3fb950"/>
+
+    <text x="0" y="252" class="sans" font-size="30" fill="#c9d1d9">A lightweight, open-source</text>
+    <text x="0" y="292" class="sans" font-size="30" fill="#c9d1d9">alternative to PL/SQL.</text>
+
+    <text x="0" y="356" class="mono" font-size="18" fill="#6e7681">v0.2.0 · MIT · formerly MyPL</text>
+  </g>
+
+  <!-- Project proof: the README's own loop and the output it really prints -->
+  <g id="project-proof" transform="translate(604 22)">
+    <rect width="540" height="376" rx="14" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+    <text x="24" y="34" class="mono" font-size="18" fill="#8b949e">todo.apx</text>
+    <line x1="0" y1="50" x2="540" y2="50" stroke="#30363d" stroke-width="1.5"/>
+
+    <g class="mono" font-size="19" fill="#e6edf3">
+      <text x="24" y="82"><tspan fill="#f0883e">proc</tspan> list_todos() -&gt; <tspan fill="#f0883e">int</tspan> {</text>
+      <text x="47" y="110"><tspan fill="#f0883e">for</tspan> todo <tspan fill="#f0883e">in</tspan> <tspan fill="#3fb950">select id, title from todos</tspan> {</text>
+      <text x="70" y="138">print concat(int_to_string(todo.id),</text>
+      <text x="116" y="166">concat(<tspan fill="#a5d6ff">": "</tspan>, todo.title));</text>
+      <text x="47" y="194">}</text>
+      <text x="47" y="222"><tspan fill="#f0883e">return</tspan> 0;</text>
+      <text x="24" y="250">}</text>
+    </g>
+
+    <line x1="0" y1="270" x2="540" y2="270" stroke="#30363d" stroke-width="1.5"/>
+    <g class="mono" font-size="19">
+      <text x="24" y="302" fill="#8b949e"><tspan fill="#3fb950">$</tspan> auspex todo.apx --db :memory:</text>
+      <text x="24" y="330" fill="#e6edf3">1: buy milk</text>
+      <text x="24" y="358" fill="#e6edf3">2: walk dog</text>
+    </g>
+  </g>
+</svg>
