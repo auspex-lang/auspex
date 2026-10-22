@@ -722,6 +722,37 @@ TEST(btree_free_pages_releases_pages) {
     cleanup(path);
 }
 
+/* Enough sequential keys that an internal node fills and splits (about 4,500
+   keys at the current fanout); the split once wrote past the node's key and
+   child arrays and left the index unsearchable. */
+TEST(btree_internal_node_split_keeps_search_correct) {
+    char* path = make_temp_path();
+    Pager* pager = pager_open(path);
+    BTree* tree = btree_create(pager);
+    ASSERT_PTR_NOT_NULL(tree);
+
+    for (int i = 0; i < 20000; i++) {
+        Cell k = int_key(i);
+        ASSERT_INT_EQ(1, btree_insert(tree, &k, 1000 + i, i));
+    }
+
+    BTreeStats stats;
+    ASSERT_INT_EQ(1, btree_stats(tree, &stats));
+    ASSERT(stats.height >= 3);
+    ASSERT_INT_EQ(20000, stats.entry_count);
+
+    for (int i = 0; i < 20000; i++) {
+        Cell k = int_key(i);
+        ScanLog log = {0};
+        ASSERT_INT_EQ(1, btree_scan_eq(tree, &k, scan_log_fn, &log));
+        ASSERT_INT_EQ(1, log_has(&log, 1000 + i, i));
+    }
+
+    btree_destroy(tree);
+    pager_close(pager);
+    cleanup(path);
+}
+
 int main(void) {
     RUN_TEST(btree_insert_and_search_small);
     RUN_TEST(btree_persists_after_reopen);
@@ -743,5 +774,6 @@ int main(void) {
     RUN_TEST(btree_numeric_ordering_int_and_float_spaces);
     RUN_TEST(btree_stats_reports_shape);
     RUN_TEST(btree_free_pages_releases_pages);
+    RUN_TEST(btree_internal_node_split_keeps_search_correct);
     TEST_SUMMARY();
 }
