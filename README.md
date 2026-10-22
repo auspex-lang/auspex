@@ -79,6 +79,9 @@ Default build (needs the `sqlite3` dev library; on Ubuntu
 make clean && make && make test
 ```
 
+The default build is optimised (`-O2`). `make clean && make debug` builds
+without optimisation and with debug info.
+
 Standalone build without SQLite (custom engine only, `--db` disabled):
 
 ```bash

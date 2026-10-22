@@ -275,7 +275,7 @@ static void set_runtime_error_from_driver(VM* vm, const char* prefix) {
 
 static void set_runtime_error_sql(VM* vm, const char* message) {
     char msg[512];
-    snprintf(msg, sizeof(msg), "SQL error: %s", message);
+    snprintf(msg, sizeof(msg), "SQL error: %.490s", message);
     set_runtime_error_ex(vm, msg, 1);
 }
 
@@ -952,7 +952,7 @@ static void sequence_ensure_loaded(VM* vm) {
         slot->has_value = stored[i].has_value;
         slot->current = stored[i].current;
         slot->increment = stored[i].increment;
-        snprintf(slot->name, sizeof(slot->name), "%s", stored[i].name);
+        snprintf(slot->name, sizeof(slot->name), "%.*s", (int)sizeof(slot->name) - 1, stored[i].name);
     }
 }
 

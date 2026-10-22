@@ -1382,7 +1382,7 @@ static const char* type_name(int type) {
 #ifdef USE_SQLITE
 static void print_driver_table_schema(ReplSession* session, const char* table_name) {
     char query[512];
-    snprintf(query, sizeof(query), "PRAGMA table_info(%s)", table_name);
+    snprintf(query, sizeof(query), "PRAGMA table_info(%.400s)", table_name);
     void* result = NULL;
     if (!session->driver.query(&session->driver, query, NULL, 0, &result)) {
         return;
@@ -1456,7 +1456,7 @@ static void cmd_columns(ReplSession* session, const char* table_name) {
 #ifdef USE_SQLITE
     if (session->driver_open) {
         char query[512];
-        snprintf(query, sizeof(query), "PRAGMA table_info(%s)", table_name);
+        snprintf(query, sizeof(query), "PRAGMA table_info(%.400s)", table_name);
         void* result = NULL;
         if (!session->driver.query(&session->driver, query, NULL, 0, &result)) {
             printf("(no such table)\n");
@@ -1510,7 +1510,7 @@ static void cmd_count(ReplSession* session, const char* table_name) {
 #ifdef USE_SQLITE
     if (session->driver_open) {
         char query[512];
-        snprintf(query, sizeof(query), "SELECT count(*) FROM %s", table_name);
+        snprintf(query, sizeof(query), "SELECT count(*) FROM %.400s", table_name);
         void* result = NULL;
         if (!session->driver.query(&session->driver, query, NULL, 0, &result)) {
             printf("(could not count)\n");
@@ -1532,7 +1532,7 @@ static void cmd_count(ReplSession* session, const char* table_name) {
 #endif
 
     char query[512];
-    snprintf(query, sizeof(query), "SELECT count(*) FROM %s", table_name);
+    snprintf(query, sizeof(query), "SELECT count(*) FROM %.400s", table_name);
     Result* res = sql_exec(query, &session->ctx);
     int n = 0;
     if (res != NULL) {
@@ -1556,7 +1556,7 @@ static void cmd_indexes(ReplSession* session, const char* table_name) {
 #ifdef USE_SQLITE
     if (session->driver_open) {
         char query[512];
-        snprintf(query, sizeof(query), "PRAGMA index_list(%s)", table_name);
+        snprintf(query, sizeof(query), "PRAGMA index_list(%.400s)", table_name);
         void* result = NULL;
         if (!session->driver.query(&session->driver, query, NULL, 0, &result)) {
             printf("(no indexes)\n");
@@ -1597,7 +1597,7 @@ static void cmd_foreignkeys(ReplSession* session, const char* table_name) {
 #ifdef USE_SQLITE
     if (session->driver_open) {
         char query[512];
-        snprintf(query, sizeof(query), "PRAGMA foreign_key_list(%s)", table_name);
+        snprintf(query, sizeof(query), "PRAGMA foreign_key_list(%.400s)", table_name);
         void* result = NULL;
         if (!session->driver.query(&session->driver, query, NULL, 0, &result)) {
             printf("(no foreign keys)\n");

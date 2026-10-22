@@ -1,5 +1,5 @@
 CC      = cc
-CFLAGS  = -Wall -Wextra -std=c99 -D_GNU_SOURCE -Iinclude
+CFLAGS  = -O2 -Wall -Wextra -std=c99 -D_GNU_SOURCE -Iinclude
 LDFLAGS = -lm
 
 USE_SQLITE ?= 1
@@ -32,12 +32,17 @@ LIB_OBJECTS = $(filter-out $(OBJDIR)/main.o,$(OBJECTS))
 
 TARGET      = $(BINDIR)/auspex$(EXE)
 
-.PHONY: all clean test examples-test fuzz fuzz-run fuzz-replay install uninstall
+.PHONY: all debug clean test examples-test fuzz fuzz-run fuzz-replay install uninstall
 
 all: $(TARGET)
 
 $(TARGET): $(OBJECTS) | $(BINDIR)
 	$(CC) -o $@ $(OBJECTS) $(LDFLAGS)
+
+# Unoptimised build with debug info. Objects are shared with the default
+# build, so switch with `make clean && make debug` (and back with `make clean`).
+debug: CFLAGS := $(filter-out -O2,$(CFLAGS)) -O0 -g
+debug: $(TARGET)
 
 $(OBJDIR)/%.o: $(SRCDIR)/%.c | $(OBJDIR)
 	$(CC) $(CFLAGS) -c $< -o $@
