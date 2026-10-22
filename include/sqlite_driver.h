@@ -6,6 +6,7 @@
 
 typedef struct {
     sqlite3* db;
+    int implicit_open; /* the open transaction was started by the driver */
 } SQLiteImpl;
 
 void sqlite_driver_init(DBDriver* driver);

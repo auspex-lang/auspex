@@ -85,9 +85,14 @@ static int sqlite_open(DBDriver* driver, const char* conn) {
     return 1;
 }
 
+static int sqlite_flush_implicit(DBDriver* driver);
+
 static void sqlite_close(DBDriver* driver) {
     SQLiteImpl* impl = (SQLiteImpl*)driver->impl;
     if (impl == NULL) return;
+    /* Commit the implicit transaction; an explicit one the program left open
+       is rolled back by sqlite3_close, as before. */
+    sqlite_flush_implicit(driver);
     sqlite3_close(impl->db);
     free(impl);
     driver->impl = NULL;
@@ -212,7 +217,55 @@ static int sqlite_is_ddl(const char* sql) {
     return 0;
 }
 
+/* Statements that write, and so open the implicit transaction. Transaction
+   control, SELECT and PRAGMA run as they are. */
+static int sqlite_is_write(const char* sql) {
+    static const char* const WRITES[] = {
+        "INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "DROP", "ALTER"
+    };
+    const char* p = sql;
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == '(') p++;
+    for (size_t i = 0; i < sizeof(WRITES) / sizeof(WRITES[0]); i++) {
+        size_t len = strlen(WRITES[i]);
+        if (strncasecmp(p, WRITES[i], len) == 0 && !is_sql_alnum_(p[len])) return 1;
+    }
+    return 0;
+}
+
+/* Transaction control: BEGIN, COMMIT, END, ROLLBACK, SAVEPOINT, RELEASE. */
+static int sqlite_is_transaction_control(const char* sql) {
+    static const char* const WORDS[] = {
+        "BEGIN", "COMMIT", "END", "ROLLBACK", "SAVEPOINT", "RELEASE"
+    };
+    const char* p = sql;
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
+    for (size_t i = 0; i < sizeof(WORDS) / sizeof(WORDS[0]); i++) {
+        size_t len = strlen(WORDS[i]);
+        if (strncasecmp(p, WORDS[i], len) == 0 && !is_sql_alnum_(p[len])) return 1;
+    }
+    return 0;
+}
+
+static int sqlite_exec_raw(DBDriver* driver, const char* sql, Value* params, int param_count);
+
+/* Implicit transactions are invisible to programs: a transaction-control
+   statement first commits what the implicit transaction holds, so it sees
+   exactly the state autocommit used to leave (earlier writes committed, no
+   transaction open). Only the moment writes reach the disk changes. */
 static int sqlite_exec(DBDriver* driver, const char* sql, Value* params, int param_count) {
+    SQLiteImpl* impl = (SQLiteImpl*)driver->impl;
+    if (sqlite_is_transaction_control(sql)) {
+        if (!sqlite_flush_implicit(driver)) return -1;
+        return sqlite_exec_raw(driver, sql, params, param_count);
+    }
+    if (sqlite3_get_autocommit(impl->db) && sqlite_is_write(sql)) {
+        if (sqlite_exec_raw(driver, "BEGIN", NULL, 0) < 0) return -1;
+        impl->implicit_open = 1;
+    }
+    return sqlite_exec_raw(driver, sql, params, param_count);
+}
+
+static int sqlite_exec_raw(DBDriver* driver, const char* sql, Value* params, int param_count) {
     SQLiteImpl* impl = (SQLiteImpl*)driver->impl;
     char* normalized = sqlite_normalize_types(sql);
     if (normalized == NULL) {
@@ -408,6 +461,15 @@ static int sqlite_rollback(DBDriver* driver) {
     return sqlite_exec(driver, "ROLLBACK", NULL, 0) >= 0 ? 1 : 0;
 }
 
+static int sqlite_flush_implicit(DBDriver* driver) {
+    SQLiteImpl* impl = (SQLiteImpl*)driver->impl;
+    if (impl == NULL || !impl->implicit_open) return 1;
+    impl->implicit_open = 0;
+    /* An I/O error may already have rolled the transaction back. */
+    if (sqlite3_get_autocommit(impl->db)) return 1;
+    return sqlite_exec_raw(driver, "COMMIT", NULL, 0) >= 0 ? 1 : 0;
+}
+
 static int sqlite_savepoint(DBDriver* driver, const char* name) {
     char sql[512];
     snprintf(sql, sizeof(sql), "SAVEPOINT %s", name);
@@ -549,6 +611,7 @@ void sqlite_driver_init(DBDriver* driver) {
     driver->savepoint = sqlite_savepoint;
     driver->rollback_to_savepoint = sqlite_rollback_to_savepoint;
     driver->release_savepoint = sqlite_release_savepoint;
+    driver->flush_implicit = sqlite_flush_implicit;
     driver->sequence_load = sqlite_sequence_load;
     driver->sequence_save = sqlite_sequence_save;
     driver->sequence_drop = sqlite_sequence_drop;

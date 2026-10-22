@@ -282,6 +282,11 @@ int main(int argc, char** argv) {
     }
 
     if (driver_open) {
+        /* Close would commit too, but could not report a failed commit. */
+        if (driver.flush_implicit != NULL && !driver.flush_implicit(&driver)) {
+            fprintf(stderr, "Could not commit: %s\n", driver.error_message);
+            rc = 1;
+        }
         driver.close(&driver);
     }
     return rc;

@@ -3365,6 +3365,14 @@ static int vm_call_autonomous(VM* parent, uint16_t target, uint8_t arg_count,
     if (parent->driver == NULL || !parent->driver->is_sqlite) {
         return -1; /* fall back to normal call path */
     }
+    /* The autonomous connection has to be able to write, so the caller's
+       implicit transaction (and its write lock) ends first; before implicit
+       transactions every earlier statement was committed at this point too. */
+    if (parent->driver->flush_implicit != NULL &&
+        !parent->driver->flush_implicit(parent->driver)) {
+        set_runtime_error_from_driver(parent, "COMMIT failed");
+        return 0;
+    }
     VM* child = vm_init();
     if (child == NULL) {
         set_runtime_error(parent, "Out of memory");

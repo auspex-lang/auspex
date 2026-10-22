@@ -5420,6 +5420,7 @@ void custom_driver_init(DBDriver* driver) {
     driver->savepoint = custom_savepoint;
     driver->rollback_to_savepoint = custom_rollback_to_savepoint;
     driver->release_savepoint = custom_release_savepoint;
+    driver->flush_implicit = NULL;
     driver->sequence_load = custom_sequence_load;
     driver->sequence_save = custom_sequence_save;
     driver->sequence_drop = custom_sequence_drop;

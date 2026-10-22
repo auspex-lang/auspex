@@ -1767,6 +1767,11 @@ void repl_run(const char* db_path) {
     }
 
     for (;;) {
+        /* Each input sticks once it has run: commit what the driver's implicit
+           transaction holds before waiting for the next line. */
+        if (session.driver_open && session.driver.flush_implicit != NULL) {
+            session.driver.flush_implicit(&session.driver);
+        }
         const char* prompt = accumulated.len > 0 ? "... " : "> ";
         if (!repl_read_line(&session, prompt, line, sizeof(line))) {
             printf("\n");
