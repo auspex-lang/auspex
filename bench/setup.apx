@@ -1,0 +1,12 @@
+// Shared fixture (not timed): 10,000 rows with an index on id.
+proc main() -> int {
+    create table t (id int, v int);
+    int i = 0;
+    while i < 10000 {
+        int v = mod(i * 7, 1000);
+        insert into t values (?i, ?v);
+        i = i + 1;
+    }
+    create index t_id on t (id);
+    return 0;
+}

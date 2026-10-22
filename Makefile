@@ -32,7 +32,7 @@ LIB_OBJECTS = $(filter-out $(OBJDIR)/main.o,$(OBJECTS))
 
 TARGET      = $(BINDIR)/auspex$(EXE)
 
-.PHONY: all debug clean test examples-test fuzz fuzz-run fuzz-replay install uninstall
+.PHONY: all debug clean test bench examples-test fuzz fuzz-run fuzz-replay install uninstall
 
 all: $(TARGET)
 
@@ -125,6 +125,10 @@ ifeq ($(USE_SQLITE),1)
 endif
 	$(MAKE) --no-print-directory fuzz-replay
 	$(MAKE) --no-print-directory examples-test
+
+# Median wall time per workload in bench/ on both engines; see bench/run.sh.
+bench: $(TARGET)
+	bench/run.sh $(TARGET)
 
 # Run every runnable example (examples/*.apx and examples/phases/*.apx) and
 # require exit 0; see tests/run_examples.sh for

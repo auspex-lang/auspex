@@ -1,0 +1,12 @@
+// needs: setup.apx
+// 10,000 indexed point lookups by id.
+proc main() -> int {
+    int k = 0;
+    int x = 0;
+    while k < 10000 {
+        select v into x from t where id = ?k;
+        k = k + 1;
+    }
+    print x;
+    return 0;
+}
