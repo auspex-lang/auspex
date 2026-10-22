@@ -66,7 +66,7 @@ static void clean_default_db(void) {
 
 TEST(phase13_issue34_make_install_target) {
     char out[256];
-    system("rm -rf " PHASE13_PREFIX);
+    test_shell("rm -rf " PHASE13_PREFIX);
 
     int rc = system("make install PREFIX=" PHASE13_PREFIX
                     " > /tmp/test_phase13_install.log 2>&1");
@@ -83,11 +83,11 @@ TEST(phase13_issue34_make_install_target) {
     ASSERT_INT_EQ(0, access(PHASE13_MAN, R_OK));
     ASSERT_INT_EQ(1, read_file_to(PHASE13_MAN, out, sizeof(out)) > 0);
 
-    system("rm -rf " PHASE13_PREFIX);
+    test_shell("rm -rf " PHASE13_PREFIX);
 }
 
 TEST(phase13_issue34_make_uninstall_target) {
-    system("rm -rf " PHASE13_PREFIX);
+    test_shell("rm -rf " PHASE13_PREFIX);
 
     int rc = system("make install PREFIX=" PHASE13_PREFIX
                     " > /tmp/test_phase13_install.log 2>&1");
@@ -99,7 +99,7 @@ TEST(phase13_issue34_make_uninstall_target) {
     ASSERT(access(PHASE13_BIN, F_OK) != 0);
     ASSERT(access(PHASE13_MAN, F_OK) != 0);
 
-    system("rm -rf " PHASE13_PREFIX);
+    test_shell("rm -rf " PHASE13_PREFIX);
 }
 
 /* ===== Issue #35: README refresh =====

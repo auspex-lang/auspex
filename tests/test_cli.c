@@ -7,7 +7,7 @@ TEST(cli_runs_file_and_prints_int_result) {
     ASSERT_INT_EQ(0, WEXITSTATUS(rc));
     FILE* f = fopen("/tmp/auspex_out.txt", "r");
     char buf[64];
-    fgets(buf, sizeof(buf), f);
+    if (fgets(buf, sizeof(buf), f) == NULL) buf[0] = '\0';
     fclose(f);
     ASSERT_INT_EQ(3, atoi(buf));
 }
@@ -17,7 +17,7 @@ TEST(cli_runs_file_and_prints_float_result) {
     ASSERT_INT_EQ(0, WEXITSTATUS(rc));
     FILE* f = fopen("/tmp/auspex_out.txt", "r");
     char buf[64];
-    fgets(buf, sizeof(buf), f);
+    if (fgets(buf, sizeof(buf), f) == NULL) buf[0] = '\0';
     fclose(f);
     ASSERT_FLOAT_EQ(3.14, atof(buf));
 }
@@ -28,8 +28,8 @@ TEST(cli_returns_nonzero_on_compile_error) {
 }
 
 TEST(cli_resolves_import_relative_to_importing_file) {
-    system("rm -rf /tmp/auspex_import_test");
-    system("mkdir -p /tmp/auspex_import_test/lib");
+    test_shell("rm -rf /tmp/auspex_import_test");
+    test_shell("mkdir -p /tmp/auspex_import_test/lib");
 
     FILE* f = fopen("/tmp/auspex_import_test/lib/helper.apx", "w");
     ASSERT_PTR_NOT_NULL(f);
@@ -47,16 +47,16 @@ TEST(cli_resolves_import_relative_to_importing_file) {
     FILE* out = fopen("/tmp/auspex_out.txt", "r");
     ASSERT_PTR_NOT_NULL(out);
     char buf[64];
-    fgets(buf, sizeof(buf), out);
+    if (fgets(buf, sizeof(buf), out) == NULL) buf[0] = '\0';
     fclose(out);
     ASSERT_INT_EQ(42, atoi(buf));
 
-    system("rm -rf /tmp/auspex_import_test");
+    test_shell("rm -rf /tmp/auspex_import_test");
 }
 
 TEST(cli_resolves_nested_import_relative_to_importing_file) {
-    system("rm -rf /tmp/auspex_nested_import_test");
-    system("mkdir -p /tmp/auspex_nested_import_test/lib");
+    test_shell("rm -rf /tmp/auspex_nested_import_test");
+    test_shell("mkdir -p /tmp/auspex_nested_import_test/lib");
 
     FILE* f = fopen("/tmp/auspex_nested_import_test/lib/utils.apx", "w");
     ASSERT_PTR_NOT_NULL(f);
@@ -79,16 +79,16 @@ TEST(cli_resolves_nested_import_relative_to_importing_file) {
     FILE* out = fopen("/tmp/auspex_out.txt", "r");
     ASSERT_PTR_NOT_NULL(out);
     char buf[64];
-    fgets(buf, sizeof(buf), out);
+    if (fgets(buf, sizeof(buf), out) == NULL) buf[0] = '\0';
     fclose(out);
     ASSERT_INT_EQ(21, atoi(buf));
 
-    system("rm -rf /tmp/auspex_nested_import_test");
+    test_shell("rm -rf /tmp/auspex_nested_import_test");
 }
 
 TEST(cli_initializes_package_declared_in_imported_module) {
-    system("rm -rf /tmp/auspex_import_pkginit_test");
-    system("mkdir -p /tmp/auspex_import_pkginit_test/lib");
+    test_shell("rm -rf /tmp/auspex_import_pkginit_test");
+    test_shell("mkdir -p /tmp/auspex_import_pkginit_test/lib");
 
     FILE* f = fopen("/tmp/auspex_import_pkginit_test/lib/counter.apx", "w");
     ASSERT_PTR_NOT_NULL(f);
@@ -121,16 +121,16 @@ TEST(cli_initializes_package_declared_in_imported_module) {
     FILE* out = fopen("/tmp/auspex_out.txt", "r");
     ASSERT_PTR_NOT_NULL(out);
     char buf[64];
-    fgets(buf, sizeof(buf), out);
+    if (fgets(buf, sizeof(buf), out) == NULL) buf[0] = '\0';
     fclose(out);
     ASSERT_INT_EQ(41, atoi(buf));
 
-    system("rm -rf /tmp/auspex_import_pkginit_test");
+    test_shell("rm -rf /tmp/auspex_import_pkginit_test");
 }
 
 TEST(cli_initializes_packages_from_multiple_imported_modules_in_order) {
-    system("rm -rf /tmp/auspex_import_pkginit_multi_test");
-    system("mkdir -p /tmp/auspex_import_pkginit_multi_test/lib");
+    test_shell("rm -rf /tmp/auspex_import_pkginit_multi_test");
+    test_shell("mkdir -p /tmp/auspex_import_pkginit_multi_test/lib");
 
     FILE* f = fopen("/tmp/auspex_import_pkginit_multi_test/lib/a.apx", "w");
     ASSERT_PTR_NOT_NULL(f);
@@ -176,11 +176,11 @@ TEST(cli_initializes_packages_from_multiple_imported_modules_in_order) {
     FILE* out = fopen("/tmp/auspex_out.txt", "r");
     ASSERT_PTR_NOT_NULL(out);
     char buf[64];
-    fgets(buf, sizeof(buf), out);
+    if (fgets(buf, sizeof(buf), out) == NULL) buf[0] = '\0';
     fclose(out);
     ASSERT_INT_EQ(30, atoi(buf));
 
-    system("rm -rf /tmp/auspex_import_pkginit_multi_test");
+    test_shell("rm -rf /tmp/auspex_import_pkginit_multi_test");
 }
 
 TEST(cli_accepts_conditional_flags_in_any_order) {
@@ -213,8 +213,8 @@ TEST(cli_accepts_conditional_flags_in_any_order) {
 }
 
 TEST(cli_conditional_flags_apply_to_imports) {
-    system("rm -rf /tmp/auspex_cc_import_test");
-    system("mkdir -p /tmp/auspex_cc_import_test");
+    test_shell("rm -rf /tmp/auspex_cc_import_test");
+    test_shell("mkdir -p /tmp/auspex_cc_import_test");
 
     FILE* f = fopen("/tmp/auspex_cc_import_test/helper.apx", "w");
     ASSERT_PTR_NOT_NULL(f);
@@ -241,7 +241,7 @@ TEST(cli_conditional_flags_apply_to_imports) {
     ASSERT_PTR_NOT_NULL(fgets(buf, sizeof(buf), out));
     fclose(out);
     ASSERT_INT_EQ(42, atoi(buf));
-    system("rm -rf /tmp/auspex_cc_import_test");
+    test_shell("rm -rf /tmp/auspex_cc_import_test");
 }
 
 TEST(cli_rejects_invalid_conditional_flag) {

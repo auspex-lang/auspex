@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -1134,23 +1135,25 @@ static int vm_ensure_stack_capacity(VM* vm, int additional) {
         new_capacity *= 2;
         if (new_capacity > STACK_MAX) new_capacity = STACK_MAX;
     }
-    Value* old_stack = vm->stack;
+    /* The old pointer may not be used once realloc returns, so remember its
+       address as an integer and rebase every pointer into the array from it. */
+    uintptr_t old_base = (uintptr_t)vm->stack;
     Value* new_stack = realloc(vm->stack, sizeof(Value) * (size_t)new_capacity);
     if (new_stack == NULL) return 0;
-    ptrdiff_t delta = new_stack - old_stack;
     vm->stack = new_stack;
     vm->stack_capacity = new_capacity;
-    if (delta != 0) {
-        /* Every pointer into the old array follows the block. */
-        vm->stack_top += delta;
-        vm->frame_base += delta;
+    if ((uintptr_t)new_stack != old_base) {
+#define REBASE(p) ((p) = new_stack + (((uintptr_t)(p) - old_base) / sizeof(Value)))
+        REBASE(vm->stack_top);
+        REBASE(vm->frame_base);
         for (int i = 0; i < vm->frame_count; i++) {
-            vm->frames[i] += delta;
+            REBASE(vm->frames[i]);
         }
         for (int i = 0; i < vm->try_count; i++) {
-            vm->try_frames[i].frame_base += delta;
-            vm->try_frames[i].stack_top += delta;
+            REBASE(vm->try_frames[i].frame_base);
+            REBASE(vm->try_frames[i].stack_top);
         }
+#undef REBASE
     }
     return 1;
 }
