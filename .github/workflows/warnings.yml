@@ -39,8 +39,8 @@ jobs:
     - name: Install dependencies
       run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
 
-    - name: Build with -Werror
-      run: make clean && make all CFLAGS="-Wall -Wextra -Werror -std=c99 -D_GNU_SOURCE -Iinclude -DUSE_SQLITE"
+    - name: Build with -Werror at -O2 (some warnings only appear when optimising)
+      run: make clean && make all CFLAGS="-O2 -Wall -Wextra -Werror -std=c99 -D_GNU_SOURCE -Iinclude -DUSE_SQLITE"
 
     - name: Run tests
-      run: make test CFLAGS="-Wall -Wextra -Werror -std=c99 -D_GNU_SOURCE -Iinclude -DUSE_SQLITE"
+      run: make test CFLAGS="-O2 -Wall -Wextra -Werror -std=c99 -D_GNU_SOURCE -Iinclude -DUSE_SQLITE"

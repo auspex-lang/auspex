@@ -62,13 +62,16 @@ struct BTree {
     int    root_page;
 };
 
+/* In memory a node holds one entry more than a page does: an insert lands
+   before the overfull node is split, so an internal node briefly has
+   BTREE_INTERNAL_MAX + 1 keys and BTREE_INTERNAL_MAX + 2 children. */
 typedef struct {
     int     is_leaf;
     int     nkeys;
-    uint8_t keys[BTREE_INTERNAL_MAX][BTREE_KEY_SIZE];
-    int32_t children[BTREE_INTERNAL_MAX + 1]; /* internal nodes */
-    int32_t row_pages[BTREE_INTERNAL_MAX];    /* leaf entries */
-    int32_t row_offsets[BTREE_INTERNAL_MAX];  /* leaf entries */
+    uint8_t keys[BTREE_INTERNAL_MAX + 1][BTREE_KEY_SIZE];
+    int32_t children[BTREE_INTERNAL_MAX + 2]; /* internal nodes */
+    int32_t row_pages[BTREE_INTERNAL_MAX + 1];    /* leaf entries */
+    int32_t row_offsets[BTREE_INTERNAL_MAX + 1];  /* leaf entries */
     int32_t next;                             /* leaf link */
 } BtNode;
 

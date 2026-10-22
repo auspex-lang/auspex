@@ -11,6 +11,12 @@ so anything SQLite can express (JOINs, subqueries, window functions, …) works,
 with `?var` bind parameters substituted safely. `:memory:` is accepted for
 scratch work. In the REPL, `.connect <path>` switches sessions.
 
+- Writes outside an explicit transaction are batched: the first write opens a
+  transaction that commits when the program ends (or, in the REPL, after each
+  input), so a loop of inserts costs one disk sync instead of one per row.
+  `begin`, `commit`, `rollback` and savepoints behave exactly as before; they
+  commit the batched writes first. Another connection sees batched writes only
+  once the program finishes, and a crash before that loses them.
 - Row-level triggers snapshot affected rows with `SELECT rowid, *` around the
   DML; a BEFORE row trigger therefore sees the row image around the completed
   statement rather than the exact pre-write image.

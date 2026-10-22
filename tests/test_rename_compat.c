@@ -25,7 +25,7 @@
 #define BIN "\"$R/bin/auspex\""
 
 static void reset_work(void) {
-    system("rm -rf " WORK " && mkdir -p " WORK);
+    test_shell("rm -rf " WORK " && mkdir -p " WORK);
 }
 
 static void write_file(const char* path, const char* text) {
@@ -78,11 +78,11 @@ static void make_custom_db(const char* name, int value) {
              "    insert into t values (%d);\n"
              "    return 0;\n"
              "}\n", value);
-    system("mkdir -p " WORK "/gen && rm -f " WORK "/gen/*");
+    test_shell("mkdir -p " WORK "/gen && rm -f " WORK "/gen/*");
     write_file(WORK "/gen/gen.apx", src);
-    system(ROOT "cd " WORK "/gen && " BIN " gen.apx > /dev/null 2>&1");
+    test_shell(ROOT "cd " WORK "/gen && " BIN " gen.apx > /dev/null 2>&1");
     snprintf(cmd, sizeof(cmd), "mv " WORK "/gen/auspex.db " WORK "/%s", name);
-    system(cmd);
+    test_shell(cmd);
 }
 
 static const char* READ_T =
@@ -313,6 +313,6 @@ int main(void) {
 #ifdef USE_SQLITE
     RUN_TEST(rename_sqlite_legacy_tables_migrated);
 #endif
-    system("rm -rf " WORK);
+    test_shell("rm -rf " WORK);
     TEST_SUMMARY();
 }

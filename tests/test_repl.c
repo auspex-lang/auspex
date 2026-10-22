@@ -115,7 +115,7 @@ TEST(repl_reports_single_error_for_invalid_input) {
 }
 
 TEST(repl_connects_to_database) {
-    system("rm -f /tmp/repl_test.db");
+    test_shell("rm -f /tmp/repl_test.db");
     char out[4096];
     run_repl(".connect /tmp/repl_test.db\ncreate table t (id int);\n.tables\n.exit\n", out, sizeof(out));
     ASSERT_INT_EQ(1, output_contains(out, "t"));
@@ -406,7 +406,7 @@ TEST(repl_persisted_packages_load_in_later_sessions_sqlite) {
 
 #ifdef USE_SQLITE
 TEST(repl_lists_indexes_and_foreign_keys_in_sqlite) {
-    system("rm -f /tmp/repl_fk.db");
+    test_shell("rm -f /tmp/repl_fk.db");
     char out[4096];
     run_repl(".connect /tmp/repl_fk.db\n"
              ".sql create table users (id int primary key, name string)\n"
@@ -425,7 +425,7 @@ TEST(repl_lists_indexes_and_foreign_keys_in_sqlite) {
 int main(void) {
     /* Stored package source from an earlier run would be loaded by every
        session, so it goes too. */
-    system("rm -f auspex.db auspex.db.packages");
+    test_shell("rm -f auspex.db auspex.db.packages");
     RUN_TEST(repl_defines_and_calls_procedure);
     RUN_TEST(repl_persists_variables);
     RUN_TEST(repl_inspects_variables);

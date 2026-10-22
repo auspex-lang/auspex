@@ -1,0 +1,11 @@
+// VM only: 10 million iterations of integer arithmetic, no SQL.
+proc main() -> int {
+    int i = 0;
+    int s = 0;
+    while i < 10000000 {
+        s = s + i;
+        i = i + 1;
+    }
+    print s;
+    return 0;
+}

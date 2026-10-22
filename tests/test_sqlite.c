@@ -1,4 +1,6 @@
 #include "test_harness.h"
+#include <stdio.h>
+#include <unistd.h>
 #include <sqlite3.h>
 #include "sql_engine.h"
 #include "compiler.h"
@@ -295,6 +297,107 @@ TEST(sqlite_reports_source_line_on_sql_error) {
     driver.close(&driver);
 }
 
+/* Implicit transactions: the driver opens a transaction at the first write and
+   commits it on close (or flush_implicit), so N statements cost one fsync
+   instead of N. A second connection observes what is committed. */
+static int other_connection_count(const char* path, const char* sql) {
+    sqlite3* db = NULL;
+    if (sqlite3_open(path, &db) != SQLITE_OK) return -2;
+    sqlite3_stmt* st = NULL;
+    int n = -1;
+    if (sqlite3_prepare_v2(db, sql, -1, &st, NULL) == SQLITE_OK &&
+        sqlite3_step(st) == SQLITE_ROW) {
+        n = sqlite3_column_int(st, 0);
+    }
+    sqlite3_finalize(st);
+    sqlite3_close(db);
+    return n;
+}
+
+static void implicit_db_path(char* buf, size_t size) {
+    snprintf(buf, size, "/tmp/auspex_test_implicit_%d.db", (int)getpid());
+    unlink(buf);
+}
+
+static const char* TABLE_COUNT_SQL =
+    "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='t'";
+
+TEST(sqlite_implicit_transaction_held_until_close) {
+    char path[128];
+    implicit_db_path(path, sizeof(path));
+    DBDriver driver;
+    sqlite_driver_init(&driver);
+    ASSERT_INT_EQ(1, driver.open(&driver, path));
+    ASSERT_INT_EQ(1, driver.exec(&driver, "CREATE TABLE t (id INTEGER)", NULL, 0));
+    ASSERT_INT_EQ(1, driver.exec(&driver, "INSERT INTO t VALUES (1)", NULL, 0));
+    ASSERT_INT_EQ(0, sqlite3_get_autocommit(((SQLiteImpl*)driver.impl)->db));
+    ASSERT_INT_EQ(0, other_connection_count(path, TABLE_COUNT_SQL));
+    driver.close(&driver);
+    ASSERT_INT_EQ(1, other_connection_count(path, "SELECT count(*) FROM t"));
+    unlink(path);
+}
+
+TEST(sqlite_implicit_transaction_not_opened_by_reads) {
+    DBDriver driver;
+    sqlite_driver_init(&driver);
+    ASSERT_INT_EQ(1, driver.open(&driver, ":memory:"));
+    void* result = NULL;
+    ASSERT_INT_EQ(1, driver.query(&driver, "SELECT 1", NULL, 0, &result));
+    driver.result_free(&driver, result);
+    ASSERT_INT_EQ(1, sqlite3_get_autocommit(((SQLiteImpl*)driver.impl)->db));
+    driver.close(&driver);
+}
+
+TEST(sqlite_implicit_transaction_flush_commits) {
+    char path[128];
+    implicit_db_path(path, sizeof(path));
+    DBDriver driver;
+    sqlite_driver_init(&driver);
+    ASSERT_INT_EQ(1, driver.open(&driver, path));
+    ASSERT_INT_EQ(1, driver.flush_implicit(&driver)); /* nothing open: no-op */
+    ASSERT_INT_EQ(1, driver.exec(&driver, "CREATE TABLE t (id INTEGER)", NULL, 0));
+    ASSERT_INT_EQ(1, driver.flush_implicit(&driver));
+    ASSERT_INT_EQ(1, sqlite3_get_autocommit(((SQLiteImpl*)driver.impl)->db));
+    ASSERT_INT_EQ(1, other_connection_count(path, TABLE_COUNT_SQL));
+    driver.close(&driver);
+    unlink(path);
+}
+
+/* Transaction control sees what autocommit used to leave: BEGIN starts after
+   earlier writes are committed, so ROLLBACK undoes only what followed it. */
+TEST(sqlite_explicit_transaction_starts_after_implicit_writes) {
+    char path[128];
+    implicit_db_path(path, sizeof(path));
+    DBDriver driver;
+    sqlite_driver_init(&driver);
+    ASSERT_INT_EQ(1, driver.open(&driver, path));
+    ASSERT_INT_EQ(1, driver.exec(&driver, "CREATE TABLE t (id INTEGER)", NULL, 0));
+    ASSERT_INT_EQ(1, driver.exec(&driver, "INSERT INTO t VALUES (1)", NULL, 0));
+    ASSERT_INT_EQ(1, driver.begin(&driver));
+    ASSERT_INT_EQ(1, other_connection_count(path, "SELECT count(*) FROM t"));
+    ASSERT_INT_EQ(1, driver.exec(&driver, "INSERT INTO t VALUES (2)", NULL, 0));
+    ASSERT_INT_EQ(1, driver.rollback(&driver));
+    driver.close(&driver);
+    ASSERT_INT_EQ(1, other_connection_count(path, "SELECT count(*) FROM t"));
+    unlink(path);
+}
+
+/* Without an explicit BEGIN, ROLLBACK still fails as it did under autocommit
+   rather than silently discarding the implicit transaction's writes. */
+TEST(sqlite_rollback_without_begin_keeps_implicit_writes) {
+    char path[128];
+    implicit_db_path(path, sizeof(path));
+    DBDriver driver;
+    sqlite_driver_init(&driver);
+    ASSERT_INT_EQ(1, driver.open(&driver, path));
+    ASSERT_INT_EQ(1, driver.exec(&driver, "CREATE TABLE t (id INTEGER)", NULL, 0));
+    ASSERT_INT_EQ(1, driver.exec(&driver, "INSERT INTO t VALUES (1)", NULL, 0));
+    ASSERT_INT_EQ(0, driver.rollback(&driver));
+    driver.close(&driver);
+    ASSERT_INT_EQ(1, other_connection_count(path, "SELECT count(*) FROM t"));
+    unlink(path);
+}
+
 int main(void) {
     RUN_TEST(sqlite3_is_linked);
     RUN_TEST(sqlite_driver_crud);
@@ -307,5 +410,10 @@ int main(void) {
     RUN_TEST(sqlite_end_to_end_select_into_multi_value);
     RUN_TEST(sqlite_end_to_end_select_into_array_row);
     RUN_TEST(sqlite_reports_source_line_on_sql_error);
+    RUN_TEST(sqlite_implicit_transaction_held_until_close);
+    RUN_TEST(sqlite_implicit_transaction_not_opened_by_reads);
+    RUN_TEST(sqlite_implicit_transaction_flush_commits);
+    RUN_TEST(sqlite_explicit_transaction_starts_after_implicit_writes);
+    RUN_TEST(sqlite_rollback_without_begin_keeps_implicit_writes);
     TEST_SUMMARY();
 }

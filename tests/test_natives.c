@@ -956,8 +956,8 @@ TEST(natives_read_line_reads_from_stdin) {
 }
 
 TEST(natives_is_dir_detects_directory) {
-    system("rm -rf /tmp/auspex_isdir_test");
-    system("mkdir -p /tmp/auspex_isdir_test");
+    test_shell("rm -rf /tmp/auspex_isdir_test");
+    test_shell("mkdir -p /tmp/auspex_isdir_test");
 
     VM* vm = vm_init();
     Value argv[1];
@@ -978,11 +978,11 @@ TEST(natives_is_dir_detects_directory) {
     value_release(result);
 
     vm_free(vm);
-    system("rm -rf /tmp/auspex_isdir_test");
+    test_shell("rm -rf /tmp/auspex_isdir_test");
 }
 
 TEST(natives_mkdir_creates_directory) {
-    system("rm -rf /tmp/auspex_mkdir_test");
+    test_shell("rm -rf /tmp/auspex_mkdir_test");
 
     VM* vm = vm_init();
     Value argv[1];
@@ -1002,13 +1002,13 @@ TEST(natives_mkdir_creates_directory) {
     value_release(result);
 
     vm_free(vm);
-    system("rm -rf /tmp/auspex_mkdir_test");
+    test_shell("rm -rf /tmp/auspex_mkdir_test");
 }
 
 TEST(natives_list_dir_lists_entries) {
-    system("rm -rf /tmp/auspex_listdir_test");
-    system("mkdir -p /tmp/auspex_listdir_test");
-    system("touch /tmp/auspex_listdir_test/hello.txt");
+    test_shell("rm -rf /tmp/auspex_listdir_test");
+    test_shell("mkdir -p /tmp/auspex_listdir_test");
+    test_shell("touch /tmp/auspex_listdir_test/hello.txt");
 
     VM* vm = vm_init();
     Value argv[1];
@@ -1022,7 +1022,7 @@ TEST(natives_list_dir_lists_entries) {
     value_release(result);
 
     vm_free(vm);
-    system("rm -rf /tmp/auspex_listdir_test");
+    test_shell("rm -rf /tmp/auspex_listdir_test");
 }
 
 TEST(natives_is_digit_checks_single_character) {

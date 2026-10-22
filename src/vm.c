@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -275,7 +276,7 @@ static void set_runtime_error_from_driver(VM* vm, const char* prefix) {
 
 static void set_runtime_error_sql(VM* vm, const char* message) {
     char msg[512];
-    snprintf(msg, sizeof(msg), "SQL error: %s", message);
+    snprintf(msg, sizeof(msg), "SQL error: %.490s", message);
     set_runtime_error_ex(vm, msg, 1);
 }
 
@@ -952,7 +953,7 @@ static void sequence_ensure_loaded(VM* vm) {
         slot->has_value = stored[i].has_value;
         slot->current = stored[i].current;
         slot->increment = stored[i].increment;
-        snprintf(slot->name, sizeof(slot->name), "%s", stored[i].name);
+        snprintf(slot->name, sizeof(slot->name), "%.*s", (int)sizeof(slot->name) - 1, stored[i].name);
     }
 }
 
@@ -1134,23 +1135,25 @@ static int vm_ensure_stack_capacity(VM* vm, int additional) {
         new_capacity *= 2;
         if (new_capacity > STACK_MAX) new_capacity = STACK_MAX;
     }
-    Value* old_stack = vm->stack;
+    /* The old pointer may not be used once realloc returns, so remember its
+       address as an integer and rebase every pointer into the array from it. */
+    uintptr_t old_base = (uintptr_t)vm->stack;
     Value* new_stack = realloc(vm->stack, sizeof(Value) * (size_t)new_capacity);
     if (new_stack == NULL) return 0;
-    ptrdiff_t delta = new_stack - old_stack;
     vm->stack = new_stack;
     vm->stack_capacity = new_capacity;
-    if (delta != 0) {
-        /* Every pointer into the old array follows the block. */
-        vm->stack_top += delta;
-        vm->frame_base += delta;
+    if ((uintptr_t)new_stack != old_base) {
+#define REBASE(p) ((p) = new_stack + (((uintptr_t)(p) - old_base) / sizeof(Value)))
+        REBASE(vm->stack_top);
+        REBASE(vm->frame_base);
         for (int i = 0; i < vm->frame_count; i++) {
-            vm->frames[i] += delta;
+            REBASE(vm->frames[i]);
         }
         for (int i = 0; i < vm->try_count; i++) {
-            vm->try_frames[i].frame_base += delta;
-            vm->try_frames[i].stack_top += delta;
+            REBASE(vm->try_frames[i].frame_base);
+            REBASE(vm->try_frames[i].stack_top);
         }
+#undef REBASE
     }
     return 1;
 }
@@ -3364,6 +3367,14 @@ static int vm_call_autonomous(VM* parent, uint16_t target, uint8_t arg_count,
                               Value* out_result) {
     if (parent->driver == NULL || !parent->driver->is_sqlite) {
         return -1; /* fall back to normal call path */
+    }
+    /* The autonomous connection has to be able to write, so the caller's
+       implicit transaction (and its write lock) ends first; before implicit
+       transactions every earlier statement was committed at this point too. */
+    if (parent->driver->flush_implicit != NULL &&
+        !parent->driver->flush_implicit(parent->driver)) {
+        set_runtime_error_from_driver(parent, "COMMIT failed");
+        return 0;
     }
     VM* child = vm_init();
     if (child == NULL) {

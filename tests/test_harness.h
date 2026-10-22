@@ -58,6 +58,15 @@ static inline int test_system(const char* command) {
 #include <sys/wait.h>
 #endif
 
+/* Setup and cleanup commands (mkdir, rm -rf, ...) whose exit status does not
+   matter: a real failure shows up in the assertions that follow. Calling
+   system() bare trips -Wunused-result where glibc marks it warn_unused_result. */
+static inline void test_shell(const char* command) {
+    if (system(command) != 0) {
+        /* ignored on purpose */
+    }
+}
+
 static int tests_run = 0;
 static int tests_passed = 0;
 static int tests_failed = 0;

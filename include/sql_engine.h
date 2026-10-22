@@ -175,6 +175,13 @@ struct DBDriver {
     int (*savepoint)(DBDriver* driver, const char* name);
     int (*rollback_to_savepoint)(DBDriver* driver, const char* name);
     int (*release_savepoint)(DBDriver* driver, const char* name);
+    /* Commits a transaction the driver opened on its own. The SQLite driver
+       opens one at the first write (one fsync per program instead of one per
+       statement) and commits it on close; callers flush it where earlier
+       writes must become visible, e.g. before an autonomous transaction's
+       second connection writes. Returns 1 on success or when nothing is open.
+       NULL for drivers that never open one. */
+    int (*flush_implicit)(DBDriver* driver);
     /* Sequence persistence. Loads copy every stored sequence into `out`
        (up to `max`) and set *out_count. save creates or updates by name;
        drop removes by name. All return 1 on success, 0 on error. */

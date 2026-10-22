@@ -1162,6 +1162,7 @@ static void sql_lexer_init(SqlLexer* lex, const char* query) {
     lex->start = query;
     lex->current = query;
     lex->has_pushback = 0;
+    memset(&lex->pushback, 0, sizeof(lex->pushback));
 }
 
 static void sql_skip_whitespace(SqlLexer* lex) {
@@ -4202,14 +4203,14 @@ static int sql_parse_alter_table(const char* query, char* table_name, size_t tab
         if ((*column_flags & COL_FLAG_HAS_DEFAULT) &&
             !cell_coerce_to_column(column_default, *column_type)) {
             snprintf(g_sql_ddl_error, sizeof(g_sql_ddl_error),
-                     "DEFAULT value is not valid text for column '%s'", column_name);
+                     "DEFAULT value is not valid text for column '%.100s'", column_name);
             return 0;
         }
         if ((*column_flags & COL_FLAG_HAS_DEFAULT) &&
             column_default->type != VAL_NULL &&
             column_default->type != *column_type) {
             snprintf(g_sql_ddl_error, sizeof(g_sql_ddl_error),
-                     "DEFAULT value type does not match type of column '%s'", column_name);
+                     "DEFAULT value type does not match type of column '%.100s'", column_name);
             return 0;
         }
     }
@@ -4417,7 +4418,7 @@ static int execute_alter_add_column(Context* ctx, const char* table_name,
     if (row_count > 0 && !has_default &&
         (column_flags & (COL_FLAG_NOT_NULL | COL_FLAG_PRIMARY_KEY))) {
         snprintf(g_sql_ddl_error, sizeof(g_sql_ddl_error),
-                 "%s constraint violated: %s.%s",
+                 "%s constraint violated: %.100s.%.100s",
                  constraint_label(column_flags), table_name, column_name);
         free_rows(rows, row_count);
         return 0;
@@ -4426,7 +4427,7 @@ static int execute_alter_add_column(Context* ctx, const char* table_name,
         (column_flags & (COL_FLAG_UNIQUE | COL_FLAG_PRIMARY_KEY))) {
         /* Every old row would be backfilled with the same value. */
         snprintf(g_sql_ddl_error, sizeof(g_sql_ddl_error),
-                 "%s constraint violated: %s.%s",
+                 "%s constraint violated: %.100s.%.100s",
                  constraint_label(column_flags), table_name, column_name);
         free_rows(rows, row_count);
         return 0;
@@ -5419,6 +5420,7 @@ void custom_driver_init(DBDriver* driver) {
     driver->savepoint = custom_savepoint;
     driver->rollback_to_savepoint = custom_rollback_to_savepoint;
     driver->release_savepoint = custom_release_savepoint;
+    driver->flush_implicit = NULL;
     driver->sequence_load = custom_sequence_load;
     driver->sequence_save = custom_sequence_save;
     driver->sequence_drop = custom_sequence_drop;

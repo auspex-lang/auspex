@@ -1313,7 +1313,7 @@ static void sweep_name(char* buf, size_t size, int i) {
 static int sweep_count(Context* ctx, const char* op, const char* literal) {
     char query[512];
     snprintf(query, sizeof(query),
-             "SELECT id FROM sweep WHERE name %s '%s'", op, literal);
+             "SELECT id FROM sweep WHERE name %s '%.400s'", op, literal);
     Result* res = sql_exec(query, ctx);
     if (res == NULL) return -1;
     int count = res->row_count;
