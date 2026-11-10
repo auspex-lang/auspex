@@ -263,7 +263,7 @@ static int native_substring(VM* vm, int argc, Value* argv, Value* out) {
     if (start < 0) start = 0;
     if (start > len_s) start = len_s;
     if (len < 0) len = 0;
-    if (start + len > len_s) len = len_s - start;
+    if (len > len_s - start) len = len_s - start; /* no start + len: len may be INT_MAX */
     char* buf = malloc((size_t)len + 1);
     if (buf == NULL) {
         vm_set_error(vm, "Out of memory");
@@ -676,16 +676,33 @@ static int native_sqrt(VM* vm, int argc, Value* argv, Value* out) {
     return 1;
 }
 
-static int native_round(VM* vm, int argc, Value* argv, Value* out) {
+/* A rounded float as an int, or 0 with a numeric-overflow error (SQLCODE
+   -1426, as the VM's arithmetic) when it is outside the int range or NaN.
+   Converting such a double to an integer type is undefined in C. */
+static int float_to_int_checked(VM* vm, const char* who, double rounded, Value* out) {
+    if (!(rounded >= -9223372036854775808.0 && rounded < 9223372036854775808.0)) {
+        char msg[96];
+        snprintf(msg, sizeof(msg), "%s: numeric overflow", who);
+        vm_set_error_with_code(vm, msg, -1426);
+        return 0;
+    }
+    *out = value_int((int64_t)rounded);
+    return 1;
+}
+
+static int native_round(
+VM* vm, int argc, Value* argv, Value* out) {
     (void)vm;
     (void)argc;
     if (argv[0].type != VAL_FLOAT && argv[0].type != VAL_INT) {
         vm_set_error(vm, "round expects a number");
         return 0;
     }
-    double n = argv[0].type == VAL_FLOAT ? argv[0].as.as_float : (double)argv[0].as.as_int;
-    *out = value_int((int)round(n));
-    return 1;
+    if (argv[0].type == VAL_INT) {
+        *out = argv[0]; /* already whole; a double would lose bits above 2^53 */
+        return 1;
+    }
+    return float_to_int_checked(vm, "round", round(argv[0].as.as_float), out);
 }
 
 static int native_floor(VM* vm, int argc, Value* argv, Value* out) {
@@ -695,9 +712,11 @@ static int native_floor(VM* vm, int argc, Value* argv, Value* out) {
         vm_set_error(vm, "floor expects a number");
         return 0;
     }
-    double n = argv[0].type == VAL_FLOAT ? argv[0].as.as_float : (double)argv[0].as.as_int;
-    *out = value_int((int)floor(n));
-    return 1;
+    if (argv[0].type == VAL_INT) {
+        *out = argv[0];
+        return 1;
+    }
+    return float_to_int_checked(vm, "floor", floor(argv[0].as.as_float), out);
 }
 
 static int native_ceil(VM* vm, int argc, Value* argv, Value* out) {
@@ -707,9 +726,11 @@ static int native_ceil(VM* vm, int argc, Value* argv, Value* out) {
         vm_set_error(vm, "ceil expects a number");
         return 0;
     }
-    double n = argv[0].type == VAL_FLOAT ? argv[0].as.as_float : (double)argv[0].as.as_int;
-    *out = value_int((int)ceil(n));
-    return 1;
+    if (argv[0].type == VAL_INT) {
+        *out = argv[0];
+        return 1;
+    }
+    return float_to_int_checked(vm, "ceil", ceil(argv[0].as.as_float), out);
 }
 
 static int native_mod(VM* vm, int argc, Value* argv, Value* out) {
@@ -2227,7 +2248,12 @@ static int native_nextval(VM* vm, int argc, Value* argv, Value* out) {
     }
     const char* name = argv[0].as.as_string ? argv[0].as.as_string : "";
     int64_t value = 0;
-    if (!vm_sequence_nextval(vm, name, &value)) {
+    int rc = vm_sequence_nextval(vm, name, &value);
+    if (rc < 0) {
+        vm_set_error_with_code(vm, "nextval: numeric overflow", -1426);
+        return 0;
+    }
+    if (rc == 0) {
         vm_set_error(vm, "nextval: sequence does not exist");
         return 0;
     }

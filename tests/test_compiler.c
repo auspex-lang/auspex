@@ -1598,6 +1598,68 @@ TEST(compiler_map_int_keys_beyond_32_bits_are_distinct) {
         &result));
     ASSERT_INT64_EQ(INT64_C(102030), result);
 }
+
+/* Runs main and returns the runtime error message, or NULL if it succeeded.
+   The message is copied into `error`. */
+static const char* run_main_error(const char* source, char* error, size_t error_size) {
+    Chunk chunk;
+    init_chunk(&chunk);
+    if (!compile(source, &chunk, error, error_size)) {
+        free_chunk(&chunk);
+        return "compile error";
+    }
+    VM* vm = vm_init();
+    const char* result = NULL;
+    if (vm_interpret(vm, &chunk) != INTERPRET_OK) {
+        snprintf(error, error_size, "%s", vm_get_error(vm) != NULL ? vm_get_error(vm) : "");
+        result = error;
+    }
+    vm_free(vm);
+    free_chunk(&chunk);
+    return result;
+}
+
+TEST(compiler_int_overflow_is_a_runtime_error) {
+    static const char* const cases[] = {
+        "proc main() -> int { int m = 9223372036854775807; return m + 1; }",
+        "proc main() -> int { int m = -9223372036854775807 - 1; return m - 1; }",
+        "proc main() -> int { int m = 4294967296; return m * m; }",
+        "proc main() -> int { int m = -9223372036854775807 - 1; return m / -1; }",
+        "proc main() -> int { int m = -9223372036854775807 - 1; return -m; }",
+        "proc main() -> int { int s = 1; while true { s = s * 3; } return s; }",
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        char error[256] = {0};
+        const char* failure = run_main_error(cases[i], error, sizeof(error));
+        ASSERT_PTR_NOT_NULL(failure);
+        ASSERT_PTR_NOT_NULL(strstr(failure, "numeric overflow"));
+    }
+}
+
+TEST(compiler_int_arithmetic_up_to_the_limits_is_exact) {
+    int64_t result = 0;
+    ASSERT_INT_EQ(1, run_main_int64(
+        "proc main() -> int { int m = 9223372036854775806; return m + 1; }", &result));
+    ASSERT_INT64_EQ(INT64_MAX, result);
+    ASSERT_INT_EQ(1, run_main_int64(
+        "proc main() -> int { int m = 3037000499; return m * m; }", &result));
+    ASSERT_INT64_EQ(INT64_C(9223372030926249001), result);
+    ASSERT_INT_EQ(1, run_main_int64(
+        "proc main() -> int { int m = -9223372036854775807 - 1; return m / 1 + m / -2; }", &result));
+    ASSERT_INT64_EQ(INT64_C(-4611686018427387904), result); /* INT64_MIN + 2^62 */
+    ASSERT_INT_EQ(1, run_main_int64(
+        "proc main() -> int { int m = -9223372036854775807; return -m; }", &result));
+    ASSERT_INT64_EQ(INT64_MAX, result);
+}
+
+TEST(compiler_int_overflow_is_catchable_with_sqlcode_1426) {
+    int64_t result = 0;
+    ASSERT_INT_EQ(1, run_main_int64(
+        "proc main() -> int { int m = 9223372036854775807; "
+        "try { m = m + 1; return 0; } catch (e) { return sqlcode; } }",
+        &result));
+    ASSERT_INT64_EQ(-1426, result);
+}
 int main(void) {
     RUN_TEST(compiler_compiles_integer_return);
     RUN_TEST(compiler_compiles_local_variables);
@@ -1693,5 +1755,8 @@ int main(void) {
     RUN_TEST(compiler_int_literal_beyond_64_bits_is_rejected);
     RUN_TEST(compiler_array_index_beyond_int_range_is_out_of_bounds);
     RUN_TEST(compiler_map_int_keys_beyond_32_bits_are_distinct);
+    RUN_TEST(compiler_int_overflow_is_a_runtime_error);
+    RUN_TEST(compiler_int_arithmetic_up_to_the_limits_is_exact);
+    RUN_TEST(compiler_int_overflow_is_catchable_with_sqlcode_1426);
     TEST_SUMMARY();
 }

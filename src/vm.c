@@ -1015,7 +1015,11 @@ int vm_sequence_nextval(VM* vm, const char* name, int64_t* out) {
     int old_has_value = slot->has_value;
     int64_t old_current = slot->current;
     if (slot->has_value) {
-        slot->current += slot->increment;
+        int64_t next;
+        if (!int64_add_checked(slot->current, slot->increment, &next)) {
+            return -1; /* the next value does not fit; the sequence is unchanged */
+        }
+        slot->current = next;
     } else {
         slot->has_value = 1;
     }
@@ -1211,6 +1215,34 @@ static int pop(VM* vm, Value* out) {
     }
     vm->stack_top--;
     *out = *vm->stack_top;
+    return 1;
+}
+
+/* SQLCODE of a numeric overflow, after Oracle's ORA-01426. */
+#define SQLCODE_NUMERIC_OVERFLOW (-1426)
+
+static void set_numeric_overflow(VM* vm) {
+    set_runtime_error_ex(vm, "numeric overflow", SQLCODE_NUMERIC_OVERFLOW);
+}
+
+/* int OP int on the top two stack values, with overflow detection. Returns 1
+   when it replaced them with the result, 0 when they are not both ints (stack
+   untouched, the generic Value path applies), or -1 on overflow (operands
+   popped, error set; the caller THROWs). Ints own no memory, so nothing needs
+   releasing. */
+static int int_arith(VM* vm, int (*op)(int64_t, int64_t, int64_t*)) {
+    if (vm->stack_top - vm->stack < 2) return 0;
+    Value* a = vm->stack_top - 2;
+    Value* b = vm->stack_top - 1;
+    if (a->type != VAL_INT || b->type != VAL_INT) return 0;
+    int64_t result;
+    if (!op(a->as.as_int, b->as.as_int, &result)) {
+        vm->stack_top -= 2;
+        set_numeric_overflow(vm);
+        return -1;
+    }
+    a->as.as_int = result;
+    vm->stack_top--;
     return 1;
 }
 
@@ -2133,18 +2165,33 @@ dispatch:
                 DISPATCH();
             }
             CASE(OP_ADD): {
-                if (!binary_op(vm, value_add)) return INTERPRET_RUNTIME_ERROR;
+                int handled = int_arith(vm, int64_add_checked);
+                if (handled < 0) THROW(vm);
+                if (handled == 0 && !binary_op(vm, value_add)) return INTERPRET_RUNTIME_ERROR;
                 DISPATCH();
             }
             CASE(OP_SUB): {
-                if (!binary_op(vm, value_sub)) return INTERPRET_RUNTIME_ERROR;
+                int handled = int_arith(vm, int64_sub_checked);
+                if (handled < 0) THROW(vm);
+                if (handled == 0 && !binary_op(vm, value_sub)) return INTERPRET_RUNTIME_ERROR;
                 DISPATCH();
             }
             CASE(OP_MUL): {
-                if (!binary_op(vm, value_mul)) return INTERPRET_RUNTIME_ERROR;
+                int handled = int_arith(vm, int64_mul_checked);
+                if (handled < 0) THROW(vm);
+                if (handled == 0 && !binary_op(vm, value_mul)) return INTERPRET_RUNTIME_ERROR;
                 DISPATCH();
             }
             CASE(OP_DIV): {
+                /* The one int quotient that does not fit: INT64_MIN / -1
+                   (which also traps on x86 rather than wrapping). */
+                if (vm->stack_top - vm->stack >= 2 &&
+                    vm->stack_top[-2].type == VAL_INT && vm->stack_top[-1].type == VAL_INT &&
+                    vm->stack_top[-2].as.as_int == INT64_MIN && vm->stack_top[-1].as.as_int == -1) {
+                    vm->stack_top -= 2;
+                    set_numeric_overflow(vm);
+                    THROW(vm);
+                }
                 if (!binary_op(vm, value_div)) return INTERPRET_RUNTIME_ERROR;
                 DISPATCH();
             }
@@ -2167,6 +2214,10 @@ dispatch:
                 if (value.type == VAL_FLOAT) {
                     ok = push(vm, value_float(-value.as.as_float));
                 } else if (value.type == VAL_INT) {
+                    if (value.as.as_int == INT64_MIN) {
+                        set_numeric_overflow(vm);
+                        THROW(vm);
+                    }
                     ok = push(vm, value_int(-value.as.as_int));
                 } else if (value.type == VAL_NULL) {
                     ok = push(vm, value_null());

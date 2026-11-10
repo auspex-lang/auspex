@@ -518,7 +518,9 @@ Value value_add(Value a, Value b) {
         return value_float(as_number(a) + as_number(b));
     }
     if (a.type == VAL_INT && b.type == VAL_INT) {
-        return value_int(a.as.as_int + b.as.as_int);
+        /* The VM checks int overflow before it gets here (numeric overflow
+           error); computing in unsigned keeps any other caller defined. */
+        return value_int((int64_t)((uint64_t)a.as.as_int + (uint64_t)b.as.as_int));
     }
     return value_int(0);
 }
@@ -529,7 +531,7 @@ Value value_sub(Value a, Value b) {
         return value_float(as_number(a) - as_number(b));
     }
     if (a.type == VAL_INT && b.type == VAL_INT) {
-        return value_int(a.as.as_int - b.as.as_int);
+        return value_int((int64_t)((uint64_t)a.as.as_int - (uint64_t)b.as.as_int));
     }
     return value_int(0);
 }
@@ -540,7 +542,7 @@ Value value_mul(Value a, Value b) {
         return value_float(as_number(a) * as_number(b));
     }
     if (a.type == VAL_INT && b.type == VAL_INT) {
-        return value_int(a.as.as_int * b.as.as_int);
+        return value_int((int64_t)((uint64_t)a.as.as_int * (uint64_t)b.as.as_int));
     }
     return value_int(0);
 }
@@ -554,6 +556,8 @@ Value value_div(Value a, Value b) {
     }
     if (a.type == VAL_INT && b.type == VAL_INT) {
         if (b.as.as_int == 0) return value_int(0);
+        /* INT64_MIN / -1 traps on x86; the VM reports it as an overflow. */
+        if (b.as.as_int == -1) return value_int((int64_t)(0u - (uint64_t)a.as.as_int));
         return value_int(a.as.as_int / b.as.as_int);
     }
     return value_int(0);

@@ -1190,6 +1190,52 @@ TEST(natives_external_call_rejects_ints_that_do_not_fit_a_c_int) {
     for (int i = 0; i < 3; i++) value_release(argv[i]);
     vm_free(vm);
 }
+
+TEST(natives_rounding_to_int_is_64_bit_and_checked) {
+    VM* vm = vm_init();
+    Value out;
+    Value f[1] = {value_float(5000000000.4)};
+    ASSERT_INT_EQ(1, call_native(vm, "round", 1, f, &out));
+    ASSERT_INT64_EQ(INT64_C(5000000000), out.as.as_int);
+    Value neg[1] = {value_float(-5000000000.5)};
+    ASSERT_INT_EQ(1, call_native(vm, "floor", 1, neg, &out));
+    ASSERT_INT64_EQ(INT64_C(-5000000001), out.as.as_int);
+    ASSERT_INT_EQ(1, call_native(vm, "ceil", 1, neg, &out));
+    ASSERT_INT64_EQ(INT64_C(-5000000000), out.as.as_int);
+
+    /* An int argument comes back exactly, even above 2^53 where a double
+       would round it. */
+    Value exact[1] = {value_int(INT64_C(9007199254740993))};
+    ASSERT_INT_EQ(1, call_native(vm, "round", 1, exact, &out));
+    ASSERT_INT64_EQ(INT64_C(9007199254740993), out.as.as_int);
+
+    Value huge[1] = {value_float(1.0e19)};
+    ASSERT_INT_EQ(0, call_native(vm, "round", 1, huge, &out));
+    ASSERT_PTR_NOT_NULL(strstr(vm_get_error(vm), "numeric overflow"));
+    Value tiny[1] = {value_float(-1.0e19)};
+    ASSERT_INT_EQ(0, call_native(vm, "floor", 1, tiny, &out));
+    vm_free(vm);
+}
+
+TEST(natives_nextval_past_the_int_range_is_an_overflow) {
+    VM* vm = vm_init();
+    Value out;
+    Value create[3] = {value_string(strdup("near_max")), value_int(INT64_MAX - 1), value_int(1)};
+    ASSERT_INT_EQ(1, call_native(vm, "create_sequence", 3, create, &out));
+    Value name[1] = {value_string(strdup("near_max"))};
+    ASSERT_INT_EQ(1, call_native(vm, "nextval", 1, name, &out));
+    ASSERT_INT64_EQ(INT64_MAX - 1, out.as.as_int);
+    ASSERT_INT_EQ(1, call_native(vm, "nextval", 1, name, &out));
+    ASSERT_INT64_EQ(INT64_MAX, out.as.as_int);
+    ASSERT_INT_EQ(0, call_native(vm, "nextval", 1, name, &out));
+    ASSERT_PTR_NOT_NULL(strstr(vm_get_error(vm), "numeric overflow"));
+    /* The failed call leaves the sequence where it was. */
+    ASSERT_INT_EQ(1, call_native(vm, "currval", 1, name, &out));
+    ASSERT_INT64_EQ(INT64_MAX, out.as.as_int);
+    value_release(create[0]);
+    value_release(name[0]);
+    vm_free(vm);
+}
 int main(void) {
     RUN_TEST(natives_finds_registered_functions);
     RUN_TEST(natives_length_returns_array_length);
@@ -1269,5 +1315,7 @@ int main(void) {
     RUN_TEST(natives_sort_orders_ints_beyond_32_bits);
     RUN_TEST(natives_sequences_hold_64_bit_values);
     RUN_TEST(natives_external_call_rejects_ints_that_do_not_fit_a_c_int);
+    RUN_TEST(natives_rounding_to_int_is_64_bit_and_checked);
+    RUN_TEST(natives_nextval_past_the_int_range_is_an_overflow);
     TEST_SUMMARY();
 }

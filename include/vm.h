@@ -82,6 +82,8 @@ int             vm_dynamic_exec(VM* vm, const char* sql);
 
 /* sequences */
 int             vm_sequence_create(VM* vm, const char* name, int64_t start, int64_t increment);
+/* 1 with the next value in *out, 0 when the sequence does not exist, -1 when
+   the next value would overflow the int range (the sequence is unchanged). */
 int             vm_sequence_nextval(VM* vm, const char* name, int64_t* out);
 int             vm_sequence_currval(VM* vm, const char* name, int64_t* out);
 int             vm_sequence_drop(VM* vm, const char* name);
