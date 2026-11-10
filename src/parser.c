@@ -455,10 +455,10 @@ static Expr* number(Parser* parser) {
         if (str == NULL) return create_literal_expr(value_int(0));
         expr = create_literal_expr(value_string(str));
     } else {
-        int value = 0;
+        int64_t value = 0;
         for (int i = 0; i < parser->previous.length; i++) {
             int digit = parser->previous.start[i] - '0';
-            if (value > (INT_MAX - digit) / 10) {
+            if (value > (INT64_MAX - digit) / 10) {
                 error_at_previous(parser, "integer literal too large");
                 return NULL;
             }

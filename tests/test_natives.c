@@ -123,13 +123,17 @@ TEST(natives_abs_float_rejects_int) {
     vm_free(vm);
 }
 
-TEST(natives_abs_int_rejects_int_min) {
+TEST(natives_abs_int_rejects_the_smallest_int) {
     VM* vm = vm_init();
     Value argv[1];
-    argv[0] = value_int(INT_MIN);
+    argv[0] = value_int(INT64_MIN);
     Value result;
     ASSERT_INT_EQ(0, native_call(vm, native_find("abs_int"), 1, argv, &result));
     ASSERT_PTR_NOT_NULL(vm_get_error(vm));
+    /* The 32-bit minimum is an ordinary value now. */
+    argv[0] = value_int(INT_MIN);
+    ASSERT_INT_EQ(1, native_call(vm, native_find("abs_int"), 1, argv, &result));
+    ASSERT_INT64_EQ(INT64_C(2147483648), result.as.as_int);
     vm_free(vm);
 }
 
@@ -1069,6 +1073,123 @@ TEST(natives_is_alpha_checks_single_character) {
     vm_free(vm);
 }
 
+
+/* --- 64-bit int (#112) --- */
+
+static int call_native(VM* vm, const char* name, int argc, Value* argv, Value* out) {
+    return native_call(vm, native_find(name), argc, argv, out);
+}
+
+TEST(natives_int_text_conversions_are_64_bit) {
+    VM* vm = vm_init();
+    Value out;
+    Value max[1] = {value_int(INT64_MAX)};
+    ASSERT_INT_EQ(1, call_native(vm, "int_to_string", 1, max, &out));
+    ASSERT_STRING_EQ("9223372036854775807", out.as.as_string);
+    value_release(out);
+
+    Value text[1] = {value_string(strdup("-9223372036854775808"))};
+    ASSERT_INT_EQ(1, call_native(vm, "parse_int", 1, text, &out));
+    ASSERT_INT64_EQ(INT64_MIN, out.as.as_int);
+    value_release(text[0]);
+
+    Value too_big[1] = {value_string(strdup("9223372036854775808"))};
+    ASSERT_INT_EQ(0, call_native(vm, "parse_int", 1, too_big, &out));
+    ASSERT_INT_EQ(1, strstr(vm_get_error(vm), "out of range") != NULL);
+    value_release(too_big[0]);
+    vm_free(vm);
+}
+
+TEST(natives_int_arithmetic_is_64_bit) {
+    VM* vm = vm_init();
+    Value out;
+    Value neg[1] = {value_int(INT64_C(-5000000000))};
+    ASSERT_INT_EQ(1, call_native(vm, "abs_int", 1, neg, &out));
+    ASSERT_INT64_EQ(INT64_C(5000000000), out.as.as_int);
+    Value min[1] = {value_int(INT64_MIN)};
+    ASSERT_INT_EQ(0, call_native(vm, "abs_int", 1, min, &out));
+
+    Value pair[2] = {value_int(INT64_C(5000000000)), value_int(INT64_C(4000000000))};
+    ASSERT_INT_EQ(1, call_native(vm, "max_int", 2, pair, &out));
+    ASSERT_INT64_EQ(INT64_C(5000000000), out.as.as_int);
+    ASSERT_INT_EQ(1, call_native(vm, "min_int", 2, pair, &out));
+    ASSERT_INT64_EQ(INT64_C(4000000000), out.as.as_int);
+
+    Value m[2] = {value_int(INT64_C(10000000007)), value_int(INT64_C(1000000000))};
+    ASSERT_INT_EQ(1, call_native(vm, "mod", 2, m, &out));
+    ASSERT_INT64_EQ(7, out.as.as_int);
+    Value m1[2] = {value_int(INT64_MIN), value_int(-1)};
+    ASSERT_INT_EQ(1, call_native(vm, "mod", 2, m1, &out));
+    ASSERT_INT64_EQ(0, out.as.as_int);
+
+    Value c[3] = {value_int(INT64_C(9000000000)), value_int(0), value_int(INT64_C(6000000000))};
+    ASSERT_INT_EQ(1, call_native(vm, "clamp", 3, c, &out));
+    ASSERT_INT64_EQ(INT64_C(6000000000), out.as.as_int);
+
+    Value r[2] = {value_int(INT64_C(5000000000)), value_int(INT64_C(5000000002))};
+    for (int i = 0; i < 20; i++) {
+        ASSERT_INT_EQ(1, call_native(vm, "random_int", 2, r, &out));
+        ASSERT(out.as.as_int >= INT64_C(5000000000) && out.as.as_int <= INT64_C(5000000002));
+    }
+    Value full[2] = {value_int(INT64_MIN), value_int(INT64_MAX)};
+    ASSERT_INT_EQ(1, call_native(vm, "random_int", 2, full, &out));
+    vm_free(vm);
+}
+
+TEST(natives_sort_orders_ints_beyond_32_bits) {
+    /* The old comparator subtracted, which wraps for values this far apart. */
+    VM* vm = vm_init();
+    ArrayObj* array = array_new();
+    array_append(array, value_int(INT64_C(5000000000)));
+    array_append(array, value_int(INT64_C(-5000000000)));
+    array_append(array, value_int(1));
+    array_append(array, value_int(INT64_MAX));
+    array_append(array, value_int(INT64_MIN));
+    Value argv[1] = {value_array(array)};
+    Value out;
+    ASSERT_INT_EQ(1, call_native(vm, "sort", 1, argv, &out));
+    ASSERT_INT_EQ(5, array_length(out.as.as_array));
+    ASSERT_INT64_EQ(INT64_MIN, array_get(out.as.as_array, 0).as.as_int);
+    ASSERT_INT64_EQ(INT64_C(-5000000000), array_get(out.as.as_array, 1).as.as_int);
+    ASSERT_INT64_EQ(1, array_get(out.as.as_array, 2).as.as_int);
+    ASSERT_INT64_EQ(INT64_C(5000000000), array_get(out.as.as_array, 3).as.as_int);
+    ASSERT_INT64_EQ(INT64_MAX, array_get(out.as.as_array, 4).as.as_int);
+    value_release(out);
+    value_release(argv[0]);
+    vm_free(vm);
+}
+
+TEST(natives_sequences_hold_64_bit_values) {
+    VM* vm = vm_init();
+    Value out;
+    Value create[3] = {value_string(strdup("big_ids")), value_int(INT64_C(5000000000)),
+                       value_int(INT64_C(3000000000))};
+    ASSERT_INT_EQ(1, call_native(vm, "create_sequence", 3, create, &out));
+    Value name[1] = {value_string(strdup("big_ids"))};
+    ASSERT_INT_EQ(1, call_native(vm, "nextval", 1, name, &out));
+    ASSERT_INT64_EQ(INT64_C(5000000000), out.as.as_int);
+    ASSERT_INT_EQ(1, call_native(vm, "nextval", 1, name, &out));
+    ASSERT_INT64_EQ(INT64_C(8000000000), out.as.as_int);
+    ASSERT_INT_EQ(1, call_native(vm, "currval", 1, name, &out));
+    ASSERT_INT64_EQ(INT64_C(8000000000), out.as.as_int);
+    value_release(create[0]);
+    value_release(name[0]);
+    vm_free(vm);
+}
+
+TEST(natives_external_call_rejects_ints_that_do_not_fit_a_c_int) {
+    /* The FFI passes C ints; a value outside their range is an error rather
+       than a silently truncated argument. Checked before the library is
+       loaded, so no library is needed. */
+    VM* vm = vm_init();
+    Value out;
+    Value argv[4] = {value_string(strdup("no_such_library")), value_string(strdup("f")),
+                     value_string(strdup("i(i)")), value_int(INT64_C(4294967296))};
+    ASSERT_INT_EQ(0, call_native(vm, "external_call_sig", 4, argv, &out));
+    ASSERT_INT_EQ(1, strstr(vm_get_error(vm), "does not fit a C int") != NULL);
+    for (int i = 0; i < 3; i++) value_release(argv[i]);
+    vm_free(vm);
+}
 int main(void) {
     RUN_TEST(natives_finds_registered_functions);
     RUN_TEST(natives_length_returns_array_length);
@@ -1079,7 +1200,7 @@ int main(void) {
     RUN_TEST(natives_abs_int_rejects_float);
     RUN_TEST(natives_abs_float_returns_absolute_value);
     RUN_TEST(natives_abs_float_rejects_int);
-    RUN_TEST(natives_abs_int_rejects_int_min);
+    RUN_TEST(natives_abs_int_rejects_the_smallest_int);
     RUN_TEST(natives_min_int_returns_smaller);
     RUN_TEST(natives_max_int_returns_larger);
     RUN_TEST(natives_min_max_int_reject_float);
@@ -1143,5 +1264,10 @@ int main(void) {
     RUN_TEST(natives_list_dir_lists_entries);
     RUN_TEST(natives_is_digit_checks_single_character);
     RUN_TEST(natives_is_alpha_checks_single_character);
+    RUN_TEST(natives_int_text_conversions_are_64_bit);
+    RUN_TEST(natives_int_arithmetic_is_64_bit);
+    RUN_TEST(natives_sort_orders_ints_beyond_32_bits);
+    RUN_TEST(natives_sequences_hold_64_bit_values);
+    RUN_TEST(natives_external_call_rejects_ints_that_do_not_fit_a_c_int);
     TEST_SUMMARY();
 }

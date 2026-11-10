@@ -1,6 +1,8 @@
 #include "natives.h"
 
 #include <ctype.h>
+#include <errno.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <math.h>
 #include <regex.h>
@@ -153,7 +155,7 @@ static int native_extend(VM* vm, int argc, Value* argv, Value* out) {
         vm_set_error(vm, "extend expects an int count");
         return 0;
     }
-    if (!array_extend(argv[0].as.as_array, argv[1].as.as_int)) {
+    if (!array_extend(argv[0].as.as_array, value_int_clamp(argv[1].as.as_int))) {
         vm_set_error(vm, "Out of memory");
         return 0;
     }
@@ -172,7 +174,7 @@ static int native_array_trim(VM* vm, int argc, Value* argv, Value* out) {
         vm_set_error(vm, "array_trim expects an int count");
         return 0;
     }
-    array_trim(argv[0].as.as_array, argv[1].as.as_int);
+    array_trim(argv[0].as.as_array, value_int_clamp(argv[1].as.as_int));
     value_retain(argv[0]);
     *out = argv[0];
     return 1;
@@ -256,8 +258,8 @@ static int native_substring(VM* vm, int argc, Value* argv, Value* out) {
     }
     const char* s = argv[0].as.as_string ? argv[0].as.as_string : "";
     int len_s = (int)strlen(s);
-    int start = argv[1].as.as_int;
-    int len = argv[2].as.as_int;
+    int start = value_int_clamp(argv[1].as.as_int);
+    int len = value_int_clamp(argv[2].as.as_int);
     if (start < 0) start = 0;
     if (start > len_s) start = len_s;
     if (len < 0) len = 0;
@@ -505,7 +507,7 @@ static int native_char_at(VM* vm, int argc, Value* argv, Value* out) {
         return 0;
     }
     const char* s = argv[0].as.as_string ? argv[0].as.as_string : "";
-    int idx = argv[1].as.as_int;
+    int idx = value_int_clamp(argv[1].as.as_int);
     int len = (int)strlen(s);
     if (idx < 0 || idx >= len) {
         vm_set_error(vm, "char_at: index out of bounds");
@@ -550,7 +552,7 @@ static int native_int_to_string(VM* vm, int argc, Value* argv, Value* out) {
         vm_set_error(vm, "Out of memory");
         return 0;
     }
-    snprintf(buf, 32, "%d", argv[0].as.as_int);
+    snprintf(buf, 32, "%" PRId64, argv[0].as.as_int);
     *out = value_string(buf);
     return 1;
 }
@@ -580,9 +582,9 @@ static int native_abs_int(VM* vm, int argc, Value* argv, Value* out) {
         vm_set_error(vm, "abs_int expects an int");
         return 0;
     }
-    int n = argv[0].as.as_int;
-    if (n == INT_MIN) {
-        vm_set_error(vm, "abs_int: absolute value of INT_MIN is undefined");
+    int64_t n = argv[0].as.as_int;
+    if (n == INT64_MIN) {
+        vm_set_error(vm, "abs_int: absolute value of the smallest int is undefined");
         return 0;
     }
     *out = value_int(n < 0 ? -n : n);
@@ -608,8 +610,8 @@ static int native_min_int(VM* vm, int argc, Value* argv, Value* out) {
         vm_set_error(vm, "min_int expects two ints");
         return 0;
     }
-    int a = argv[0].as.as_int;
-    int b = argv[1].as.as_int;
+    int64_t a = argv[0].as.as_int;
+    int64_t b = argv[1].as.as_int;
     *out = value_int(a < b ? a : b);
     return 1;
 }
@@ -621,8 +623,8 @@ static int native_max_int(VM* vm, int argc, Value* argv, Value* out) {
         vm_set_error(vm, "max_int expects two ints");
         return 0;
     }
-    int a = argv[0].as.as_int;
-    int b = argv[1].as.as_int;
+    int64_t a = argv[0].as.as_int;
+    int64_t b = argv[1].as.as_int;
     *out = value_int(a > b ? a : b);
     return 1;
 }
@@ -717,12 +719,13 @@ static int native_mod(VM* vm, int argc, Value* argv, Value* out) {
         vm_set_error(vm, "mod expects two ints");
         return 0;
     }
-    int b = argv[1].as.as_int;
+    int64_t b = argv[1].as.as_int;
     if (b == 0) {
         vm_set_error(vm, "mod: division by zero");
         return 0;
     }
-    *out = value_int(argv[0].as.as_int % b);
+    /* INT64_MIN % -1 traps on x86; every int is a multiple of -1. */
+    *out = value_int(b == -1 ? 0 : argv[0].as.as_int % b);
     return 1;
 }
 
@@ -993,15 +996,15 @@ static int native_range(VM* vm, int argc, Value* argv, Value* out) {
         vm_set_error(vm, "range expects two ints");
         return 0;
     }
-    int start = argv[0].as.as_int;
-    int end = argv[1].as.as_int;
+    int64_t start = argv[0].as.as_int;
+    int64_t end = argv[1].as.as_int;
     if (end < start) end = start;
     ArrayObj* arr = array_new();
     if (arr == NULL) {
         vm_set_error(vm, "Out of memory");
         return 0;
     }
-    for (int i = start; i < end; i++) {
+    for (int64_t i = start; i < end; i++) {
         if (!array_append(arr, value_int(i))) {
             array_free(arr);
             vm_set_error(vm, "Out of memory");
@@ -1016,7 +1019,7 @@ static int native_assert(VM* vm, int argc, Value* argv, Value* out) {
     (void)argc;
     int cond = 0;
     if (argv[0].type == VAL_BOOL || argv[0].type == VAL_INT) {
-        cond = argv[0].as.as_int;
+        cond = argv[0].as.as_int != 0;
     }
     if (argv[1].type != VAL_STRING) {
         vm_set_error(vm, "assert expects (bool/int, string)");
@@ -1039,12 +1042,17 @@ static int native_parse_int(VM* vm, int argc, Value* argv, Value* out) {
     }
     const char* s = argv[0].as.as_string ? argv[0].as.as_string : "";
     char* endptr = NULL;
-    long n = strtol(s, &endptr, 10);
+    errno = 0;
+    long long n = strtoll(s, &endptr, 10);
     if (endptr == s || *endptr != '\0') {
         vm_set_error(vm, "parse_int: invalid integer");
         return 0;
     }
-    *out = value_int((int)n);
+    if (errno == ERANGE) {
+        vm_set_error(vm, "parse_int: integer out of range");
+        return 0;
+    }
+    *out = value_int((int64_t)n);
     return 1;
 }
 
@@ -1139,7 +1147,7 @@ static int native_repeat(VM* vm, int argc, Value* argv, Value* out) {
         return 0;
     }
     const char* s = argv[0].as.as_string ? argv[0].as.as_string : "";
-    int count = argv[1].as.as_int;
+    int count = value_int_clamp(argv[1].as.as_int);
     if (count < 0) count = 0;
     size_t len = strlen(s);
     char* buf = malloc(len * (size_t)count + 1);
@@ -1208,7 +1216,8 @@ static int native_format(VM* vm, int argc, Value* argv, Value* out) {
 
 static int compare_values(Value a, Value b) {
     if (a.type == VAL_INT && b.type == VAL_INT) {
-        return a.as.as_int - b.as.as_int;
+        /* Compared, not subtracted: the difference may not fit an int. */
+        return (a.as.as_int > b.as.as_int) - (a.as.as_int < b.as.as_int);
     }
     if (a.type == VAL_FLOAT || b.type == VAL_FLOAT) {
         double av = a.type == VAL_FLOAT ? a.as.as_float : (double)a.as.as_int;
@@ -1287,8 +1296,8 @@ static int native_slice(VM* vm, int argc, Value* argv, Value* out) {
     }
     ArrayObj* arr = argv[0].as.as_array;
     int len = array_length(arr);
-    int start = argv[1].as.as_int;
-    int end = argv[2].as.as_int;
+    int start = value_int_clamp(argv[1].as.as_int);
+    int end = value_int_clamp(argv[2].as.as_int);
     if (start < 0) start = 0;
     if (end > len) end = len;
     if (end < start) end = start;
@@ -1318,7 +1327,7 @@ static int native_remove_at(VM* vm, int argc, Value* argv, Value* out) {
     }
     ArrayObj* arr = argv[0].as.as_array;
     int len = array_length(arr);
-    int idx = argv[1].as.as_int;
+    int idx = value_int_clamp(argv[1].as.as_int);
     if (idx < 0 || idx >= len) {
         vm_set_error(vm, "remove_at: index out of bounds");
         return 0;
@@ -1350,7 +1359,7 @@ static int native_insert(VM* vm, int argc, Value* argv, Value* out) {
     }
     ArrayObj* arr = argv[0].as.as_array;
     int len = array_length(arr);
-    int idx = argv[1].as.as_int;
+    int idx = value_int_clamp(argv[1].as.as_int);
     if (idx < 0 || idx > len) {
         vm_set_error(vm, "insert: index out of bounds");
         return 0;
@@ -1401,10 +1410,10 @@ static int native_clamp(VM* vm, int argc, Value* argv, Value* out) {
         return 0;
     }
     if (all_int) {
-        int v = argv[0].as.as_int;
-        int lo = argv[1].as.as_int;
-        int hi = argv[2].as.as_int;
-        if (lo > hi) { int tmp = lo; lo = hi; hi = tmp; }
+        int64_t v = argv[0].as.as_int;
+        int64_t lo = argv[1].as.as_int;
+        int64_t hi = argv[2].as.as_int;
+        if (lo > hi) { int64_t tmp = lo; lo = hi; hi = tmp; }
         if (v < lo) v = lo;
         if (v > hi) v = hi;
         *out = value_int(v);
@@ -1459,7 +1468,7 @@ static int native_sleep(VM* vm, int argc, Value* argv, Value* out) {
         vm_set_error(vm, "sleep expects an int");
         return 0;
     }
-    int ms = argv[0].as.as_int;
+    int ms = value_int_clamp(argv[0].as.as_int);
     if (ms < 0) {
         vm_set_error(vm, "sleep expects a non-negative duration");
         return 0;
@@ -1476,8 +1485,8 @@ static int native_random_int(VM* vm, int argc, Value* argv, Value* out) {
         vm_set_error(vm, "random_int expects two ints");
         return 0;
     }
-    int lo = argv[0].as.as_int;
-    int hi = argv[1].as.as_int;
+    int64_t lo = argv[0].as.as_int;
+    int64_t hi = argv[1].as.as_int;
     if (lo > hi) {
         vm_set_error(vm, "random_int: min must be <= max");
         return 0;
@@ -1487,8 +1496,14 @@ static int native_random_int(VM* vm, int argc, Value* argv, Value* out) {
         srand((unsigned int)time(NULL));
         seeded = 1;
     }
-    int range = hi - lo + 1;
-    *out = value_int(lo + (rand() % range));
+    /* Width of [lo, hi] in unsigned arithmetic, which cannot overflow; 0
+       means the full 64-bit range. rand() may give only 15 bits, so the
+       draw is assembled from several calls. */
+    uint64_t span = (uint64_t)hi - (uint64_t)lo + 1u;
+    uint64_t draw = 0;
+    for (int i = 0; i < 5; i++) draw = (draw << 15) ^ (uint64_t)(rand() & 0x7FFF);
+    if (span != 0) draw %= span;
+    *out = value_int((int64_t)((uint64_t)lo + draw));
     return 1;
 }
 
@@ -1499,7 +1514,7 @@ static int native_array_fill(VM* vm, int argc, Value* argv, Value* out) {
         vm_set_error(vm, "array_fill expects (int, any)");
         return 0;
     }
-    int count = argv[0].as.as_int;
+    int count = value_int_clamp(argv[0].as.as_int);
     if (count < 0) {
         vm_set_error(vm, "array_fill: count must be non-negative");
         return 0;
@@ -1528,7 +1543,7 @@ static int native_pad_start(VM* vm, int argc, Value* argv, Value* out) {
         return 0;
     }
     const char* s = argv[0].as.as_string ? argv[0].as.as_string : "";
-    int target = argv[1].as.as_int;
+    int target = value_int_clamp(argv[1].as.as_int);
     const char* pad = argv[2].as.as_string ? argv[2].as.as_string : "";
     if (target < 0) {
         vm_set_error(vm, "pad_start: target length must be non-negative");
@@ -1649,7 +1664,7 @@ static int native_raise_application_error(VM* vm, int argc, Value* argv, Value* 
         vm_set_error(vm, "raise_application_error expects (int, string)");
         return 0;
     }
-    int code = argv[0].as.as_int;
+    int code = value_int_clamp(argv[0].as.as_int);
     const char* msg = argv[1].as.as_string ? argv[1].as.as_string : "";
     vm_set_error_with_code(vm, msg, code);
     return 0;
@@ -1663,7 +1678,7 @@ static int native_pad_end(VM* vm, int argc, Value* argv, Value* out) {
         return 0;
     }
     const char* s = argv[0].as.as_string ? argv[0].as.as_string : "";
-    int target = argv[1].as.as_int;
+    int target = value_int_clamp(argv[1].as.as_int);
     const char* pad = argv[2].as.as_string ? argv[2].as.as_string : "";
     if (target < 0) {
         vm_set_error(vm, "pad_end: target length must be non-negative");
@@ -1864,7 +1879,7 @@ static int native_dbms_output_enable(VM* vm, int argc, Value* argv, Value* out) 
         vm_set_error(vm, "dbms_output_enable expects an int");
         return 0;
     }
-    vm_dbms_output_enable(vm, argv[0].as.as_int);
+    vm_dbms_output_enable(vm, value_int_clamp(argv[0].as.as_int));
     *out = value_int(0);
     return 1;
 }
@@ -1909,7 +1924,7 @@ static int native_utl_file_get_line(VM* vm, int argc, Value* argv, Value* out) {
         vm_set_error(vm, "utl_file_get_line expects an int handle");
         return 0;
     }
-    return vm_utl_file_get_line(vm, argv[0].as.as_int, out);
+    return vm_utl_file_get_line(vm, value_int_clamp(argv[0].as.as_int), out);
 }
 
 static int native_utl_file_put_line(VM* vm, int argc, Value* argv, Value* out) {
@@ -1918,7 +1933,7 @@ static int native_utl_file_put_line(VM* vm, int argc, Value* argv, Value* out) {
         return 0;
     }
     const char* text = argv[1].as.as_string ? argv[1].as.as_string : "";
-    *out = value_int(vm_utl_file_put_line(vm, argv[0].as.as_int, text) ? 0 : -1);
+    *out = value_int(vm_utl_file_put_line(vm, value_int_clamp(argv[0].as.as_int), text) ? 0 : -1);
     return 1;
 }
 
@@ -1927,7 +1942,7 @@ static int native_utl_file_fseek(VM* vm, int argc, Value* argv, Value* out) {
         vm_set_error(vm, "utl_file_fseek expects (int, int)");
         return 0;
     }
-    *out = value_int(vm_utl_file_fseek(vm, argv[0].as.as_int, argv[1].as.as_int));
+    *out = value_int(vm_utl_file_fseek(vm, value_int_clamp(argv[0].as.as_int), value_int_clamp(argv[1].as.as_int)));
     return 1;
 }
 
@@ -1936,7 +1951,7 @@ static int native_utl_file_fflush(VM* vm, int argc, Value* argv, Value* out) {
         vm_set_error(vm, "utl_file_fflush expects an int handle");
         return 0;
     }
-    *out = value_int(vm_utl_file_fflush(vm, argv[0].as.as_int) ? 0 : -1);
+    *out = value_int(vm_utl_file_fflush(vm, value_int_clamp(argv[0].as.as_int)) ? 0 : -1);
     return 1;
 }
 
@@ -1945,7 +1960,7 @@ static int native_utl_file_fclose(VM* vm, int argc, Value* argv, Value* out) {
         vm_set_error(vm, "utl_file_fclose expects an int handle");
         return 0;
     }
-    *out = value_int(vm_utl_file_fclose(vm, argv[0].as.as_int) ? 0 : -1);
+    *out = value_int(vm_utl_file_fclose(vm, value_int_clamp(argv[0].as.as_int)) ? 0 : -1);
     return 1;
 }
 
@@ -2016,7 +2031,7 @@ static int native_dbms_sql_parse(VM* vm, int argc, Value* argv, Value* out) {
         vm_set_error(vm, "dbms_sql_parse expects (int, string)");
         return 0;
     }
-    int ok = vm_dbms_sql_parse(vm, argv[0].as.as_int,
+    int ok = vm_dbms_sql_parse(vm, value_int_clamp(argv[0].as.as_int),
                                argv[1].as.as_string ? argv[1].as.as_string : "");
     *out = value_int(ok ? 0 : -1);
     return ok;
@@ -2027,7 +2042,7 @@ static int native_dbms_sql_bind_variable(VM* vm, int argc, Value* argv, Value* o
         vm_set_error(vm, "dbms_sql_bind_variable expects (int, string, value)");
         return 0;
     }
-    int ok = vm_dbms_sql_bind_variable(vm, argv[0].as.as_int,
+    int ok = vm_dbms_sql_bind_variable(vm, value_int_clamp(argv[0].as.as_int),
                                        argv[1].as.as_string ? argv[1].as.as_string : "",
                                        argv[2]);
     *out = value_int(ok ? 0 : -1);
@@ -2039,7 +2054,7 @@ static int native_dbms_sql_cursor_execute(VM* vm, int argc, Value* argv, Value* 
         vm_set_error(vm, "dbms_sql_cursor_execute expects an int handle");
         return 0;
     }
-    int rc = vm_dbms_sql_cursor_execute(vm, argv[0].as.as_int);
+    int rc = vm_dbms_sql_cursor_execute(vm, value_int_clamp(argv[0].as.as_int));
     if (rc < 0) return 0;
     *out = value_int(rc);
     return 1;
@@ -2050,7 +2065,7 @@ static int native_dbms_sql_fetch_rows(VM* vm, int argc, Value* argv, Value* out)
         vm_set_error(vm, "dbms_sql_fetch_rows expects (int, int)");
         return 0;
     }
-    *out = vm_dbms_sql_fetch_rows(vm, argv[0].as.as_int, argv[1].as.as_int);
+    *out = vm_dbms_sql_fetch_rows(vm, value_int_clamp(argv[0].as.as_int), value_int_clamp(argv[1].as.as_int));
     return 1;
 }
 
@@ -2059,7 +2074,7 @@ static int native_dbms_sql_column_value(VM* vm, int argc, Value* argv, Value* ou
         vm_set_error(vm, "dbms_sql_column_value expects (int, int)");
         return 0;
     }
-    *out = vm_dbms_sql_column_value(vm, argv[0].as.as_int, argv[1].as.as_int);
+    *out = vm_dbms_sql_column_value(vm, value_int_clamp(argv[0].as.as_int), value_int_clamp(argv[1].as.as_int));
     return 1;
 }
 
@@ -2068,7 +2083,7 @@ static int native_dbms_sql_close_cursor(VM* vm, int argc, Value* argv, Value* ou
         vm_set_error(vm, "dbms_sql_close_cursor expects an int handle");
         return 0;
     }
-    int ok = vm_dbms_sql_close_cursor(vm, argv[0].as.as_int);
+    int ok = vm_dbms_sql_close_cursor(vm, value_int_clamp(argv[0].as.as_int));
     *out = value_int(ok ? 0 : -1);
     return ok;
 }
@@ -2211,7 +2226,7 @@ static int native_nextval(VM* vm, int argc, Value* argv, Value* out) {
         return 0;
     }
     const char* name = argv[0].as.as_string ? argv[0].as.as_string : "";
-    int value = 0;
+    int64_t value = 0;
     if (!vm_sequence_nextval(vm, name, &value)) {
         vm_set_error(vm, "nextval: sequence does not exist");
         return 0;
@@ -2226,7 +2241,7 @@ static int native_currval(VM* vm, int argc, Value* argv, Value* out) {
         return 0;
     }
     const char* name = argv[0].as.as_string ? argv[0].as.as_string : "";
-    int value = 0;
+    int64_t value = 0;
     if (!vm_sequence_currval(vm, name, &value)) {
         vm_set_error(vm, "currval: sequence does not exist or nextval was never called");
         return 0;
@@ -2309,7 +2324,14 @@ static int external_call_invoke(VM* vm, const char* who, ExtKind ret, int argc, 
 
     ExtKind arg = argv[2].type == VAL_INT ? EXT_INT :
                   argv[2].type == VAL_FLOAT ? EXT_FLOAT : EXT_STRING;
-    int i_arg = arg == EXT_INT ? argv[2].as.as_int : 0;
+    if (arg == EXT_INT && (argv[2].as.as_int < INT_MIN || argv[2].as.as_int > INT_MAX)) {
+        char msg[160];
+        snprintf(msg, sizeof(msg), "%s: argument %" PRId64 " does not fit a C int", who,
+                 argv[2].as.as_int);
+        vm_set_error(vm, msg);
+        return 0;
+    }
+    int i_arg = arg == EXT_INT ? (int)argv[2].as.as_int : 0;
     double f_arg = arg == EXT_FLOAT ? argv[2].as.as_float : 0.0;
     const char* s_arg = arg == EXT_STRING && argv[2].as.as_string ? argv[2].as.as_string : "";
 
@@ -2501,7 +2523,13 @@ static int native_external_call_sig(VM* vm, int argc, Value* argv, Value* out) {
         int ok = 1;
         if (types[i] == EXTERNAL_SIG_INT) {
             ok = v.type == VAL_INT;
-            args[i].i = ok ? v.as.as_int : 0;
+            if (ok && (v.as.as_int < INT_MIN || v.as.as_int > INT_MAX)) {
+                snprintf(msg, sizeof(msg), "%s: argument %d (%" PRId64 ") does not fit a C int",
+                         who, i + 1, v.as.as_int);
+                vm_set_error(vm, msg);
+                return 0;
+            }
+            args[i].i = ok ? (int)v.as.as_int : 0;
         } else if (types[i] == EXTERNAL_SIG_FLOAT) {
             ok = v.type == VAL_FLOAT || v.type == VAL_INT;
             args[i].d = v.type == VAL_FLOAT ? v.as.as_float : (double)v.as.as_int;

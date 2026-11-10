@@ -2145,7 +2145,7 @@ static int sql_parse_select(const char* query, SelectStmt* stmt) {
                 if (bound.type == VAL_STRING) free(bound.as.as_string);
                 return 0;
             }
-            stmt->limit_count = bound.as.as_int;
+            stmt->limit_count = value_int_clamp(bound.as.as_int);
         } else if (tok.type == TOK_NUMBER) {
             char buf[64];
             sql_token_text(&tok, buf, sizeof(buf));
@@ -2527,15 +2527,21 @@ static Cell compute_aggregate(AggregateFunc agg, Row** rows, int row_count,
 
     if (agg == AGG_SUM || agg == AGG_AVG) {
         double sum = 0;
-        long long int_sum = 0;
+        int64_t int_sum = 0;
+        int int_overflow = 0;
         int numeric_count = 0;
         int saw_float = 0;
         for (int i = 0; i < row_count; i++) {
             Cell* value = source_row_find_field(rows[i], arg);
             if (value == NULL || value->type == VAL_NULL) continue;
             if (value->type == VAL_INT) {
-                sum += value->as.as_int;
-                int_sum += value->as.as_int;
+                sum += (double)value->as.as_int;
+                int64_t v = value->as.as_int;
+                if ((v > 0 && int_sum > INT64_MAX - v) || (v < 0 && int_sum < INT64_MIN - v)) {
+                    int_overflow = 1;
+                } else {
+                    int_sum += v;
+                }
                 numeric_count++;
             } else if (value->type == VAL_FLOAT) {
                 sum += value->as.as_float;
@@ -2546,12 +2552,12 @@ static Cell compute_aggregate(AggregateFunc agg, Row** rows, int row_count,
         if (agg == AGG_AVG && numeric_count > 0) {
             result.type = VAL_FLOAT;
             result.as.as_float = sum / numeric_count;
-        } else if (agg == AGG_SUM && !saw_float && int_sum >= INT_MIN && int_sum <= INT_MAX) {
+        } else if (agg == AGG_SUM && !saw_float && !int_overflow) {
             /* SUM over ints is an int, as on SQLite, so it can be selected
-               into an int variable. A sum past the int range falls back to
-               float rather than wrapping. */
+               into an int variable. A sum past the (64-bit) int range falls
+               back to float rather than wrapping. */
             result.type = VAL_INT;
-            result.as.as_int = (int)int_sum;
+            result.as.as_int = int_sum;
         } else {
             result.type = VAL_FLOAT;
             result.as.as_float = sum;
@@ -5997,7 +6003,7 @@ int sql_cell_to_value(const Cell* cell, Value* out) {
     switch (cell->type) {
         case VAL_INT:    *out = value_int(cell->as.as_int);     return 1;
         case VAL_FLOAT:  *out = value_float(cell->as.as_float); return 1;
-        case VAL_BOOL:   *out = value_bool(cell->as.as_int);    return 1;
+        case VAL_BOOL:   *out = value_bool(cell->as.as_int != 0); return 1;
         case VAL_STRING:
             *out = value_string(strdup(cell->as.as_string != NULL
                                        ? cell->as.as_string : ""));

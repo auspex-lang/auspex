@@ -1,3 +1,4 @@
+#include <inttypes.h>
 #include <stdio.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -288,7 +289,7 @@ static StringObj* string_obj_from_chars(const char* chars) {
     return (StringObj*)(chars - offsetof(StringObj, chars));
 }
 
-Value value_int(int v) {
+Value value_int(int64_t v) {
     Value value;
     value.type = VAL_INT;
     value.as.as_int = v;
@@ -657,7 +658,7 @@ void value_print(Value value) {
             printf("null");
             break;
         case VAL_INT:
-            printf("%d", value.as.as_int);
+            printf("%" PRId64, value.as.as_int);
             break;
         case VAL_FLOAT:
             printf("%g", value.as.as_float);
@@ -998,7 +999,9 @@ int map_count(MapObj* map) {
 
 static int map_key_compare(Value a, Value b) {
     if (a.type == VAL_INT && b.type == VAL_INT) {
-        return a.as.as_int - b.as.as_int;
+        /* Compared, not subtracted: the difference of two 64-bit keys
+           need not fit the int result. */
+        return (a.as.as_int > b.as.as_int) - (a.as.as_int < b.as.as_int);
     }
     if (a.type == VAL_STRING && b.type == VAL_STRING) {
         const char* as = a.as.as_string ? a.as.as_string : "";

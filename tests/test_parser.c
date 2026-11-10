@@ -451,10 +451,14 @@ TEST(parser_parses_nested_typed_array) {
 
 TEST(parser_rejects_integer_literal_overflow) {
     char error[256];
-    Program* program = parse("proc main() -> int { int x = 2147483647; return 0; }", error, sizeof(error));
+    /* ints are 64-bit (#112): the largest literal is 2^63 - 1. */
+    Program* program = parse("proc main() -> int { int x = 9223372036854775807; return 0; }", error, sizeof(error));
     ASSERT_PTR_NOT_NULL(program);
     free_program(program);
-    program = parse("proc main() -> int { int x = 99999999999; return 0; }", error, sizeof(error));
+    program = parse("proc main() -> int { int x = 9223372036854775808; return 0; }", error, sizeof(error));
+    ASSERT_PTR_NULL(program);
+    ASSERT_PTR_NOT_NULL(strstr(error, "integer literal too large"));
+    program = parse("proc main() -> int { int x = 99999999999999999999; return 0; }", error, sizeof(error));
     ASSERT_PTR_NULL(program);
     ASSERT_PTR_NOT_NULL(strstr(error, "integer literal too large"));
 }

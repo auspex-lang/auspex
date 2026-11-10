@@ -925,7 +925,8 @@ TEST(sql_insert_multiple_rows_checks_all_before_inserting) {
 }
 
 /* SUM is an int over ints (as on SQLite), a float once any input is a
-   float, and a float when the int sum would overflow. */
+   float, and a float when the int sum would overflow. Ints are 64-bit, so
+   two 2e9 values sum to an int; it takes a sum past 2^63 to fall back. */
 TEST(sql_sum_result_type_follows_inputs) {
     char* path = make_temp_path();
     Context ctx = {path, NULL};
@@ -943,9 +944,18 @@ TEST(sql_sum_result_type_follows_inputs) {
 
     res = sql_exec("SELECT SUM(i) FROM n", &ctx);
     ASSERT_PTR_NOT_NULL(res);
+    ASSERT_INT_EQ(VAL_INT, row_get_field(&res->rows[0], "sum").type);
+    ASSERT_INT64_EQ(INT64_C(4000000000), row_get_field(&res->rows[0], "sum").as.as_int);
+    result_free(res);
+
+    ASSERT_INT_EQ(1, sql_exec_ddl("CREATE TABLE big (i INT)", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO big VALUES (9223372036854775807)", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO big VALUES (9223372036854775807)", &ctx));
+    res = sql_exec("SELECT SUM(i) FROM big", &ctx);
+    ASSERT_PTR_NOT_NULL(res);
     ASSERT_INT_EQ(VAL_FLOAT, row_get_field(&res->rows[0], "sum").type);
     result_free(res);
-    ASSERT_FLOAT_EQ(4000000000.0, select_single_float(&ctx, "SELECT SUM(i) FROM n", "sum"));
+    ASSERT_FLOAT_EQ(18446744073709551614.0, select_single_float(&ctx, "SELECT SUM(i) FROM big", "sum"));
 
     res = sql_exec("SELECT SUM(i) FROM n WHERE f > 1.6", &ctx);
     ASSERT_PTR_NOT_NULL(res);

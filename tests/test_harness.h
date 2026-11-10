@@ -1,6 +1,8 @@
 #ifndef TEST_HARNESS_H
 #define TEST_HARNESS_H
 
+#include <inttypes.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -113,6 +115,23 @@ static int current_test_failed = 0;
             tests_failed++;                                     \
             fprintf(stderr,                                     \
                     "  FAIL: %s at %s:%d: expected %d, got %d\n", \
+                    current_test_name, __FILE__, __LINE__,      \
+                    _expected, _actual);                        \
+            return;                                             \
+        }                                                       \
+    } while (0)
+
+/* ASSERT_INT_EQ narrows to int; this one keeps all 64 bits of an Auspex int. */
+#define ASSERT_INT64_EQ(expected, actual)                       \
+    do {                                                        \
+        int64_t _expected = (expected);                         \
+        int64_t _actual = (actual);                             \
+        if (_expected != _actual) {                             \
+            current_test_failed = 1;                            \
+            tests_failed++;                                     \
+            fprintf(stderr,                                     \
+                    "  FAIL: %s at %s:%d: expected %" PRId64    \
+                    ", got %" PRId64 "\n",                      \
                     current_test_name, __FILE__, __LINE__,      \
                     _expected, _actual);                        \
             return;                                             \

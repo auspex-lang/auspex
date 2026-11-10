@@ -1523,6 +1523,81 @@ TEST(compiler_runs_call_as_cfor_step) {
     free_chunk(&chunk);
 }
 
+
+/* --- 64-bit int (#112) --- */
+
+static int run_main_int64(const char* source, int64_t* result) {
+    Chunk chunk;
+    init_chunk(&chunk);
+    char error[256];
+    if (!compile(source, &chunk, error, sizeof(error))) {
+        fprintf(stderr, "compile error: %s\n", error);
+        free_chunk(&chunk);
+        return 0;
+    }
+    VM* vm = vm_init();
+    int ok = vm_interpret(vm, &chunk) == INTERPRET_OK;
+    if (ok) {
+        *result = vm_pop(vm).as.as_int;
+    } else {
+        fprintf(stderr, "runtime error: %s\n", vm_get_error(vm));
+    }
+    vm_free(vm);
+    free_chunk(&chunk);
+    return ok;
+}
+
+TEST(compiler_int_is_64_bit) {
+    int64_t result = 0;
+    ASSERT_INT_EQ(1, run_main_int64(
+        "proc main() -> int { int s = 2147483647; s = s + 1; return s; }", &result));
+    ASSERT_INT64_EQ(INT64_C(2147483648), result);
+    ASSERT_INT_EQ(1, run_main_int64(
+        "proc main() -> int { return 9223372036854775807; }", &result));
+    ASSERT_INT64_EQ(INT64_MAX, result);
+    ASSERT_INT_EQ(1, run_main_int64(
+        "proc main() -> int { return -9223372036854775807 - 1; }", &result));
+    ASSERT_INT64_EQ(INT64_MIN, result);
+    /* A 10M-iteration sum, the issue's example of a 32-bit overflow. */
+    ASSERT_INT_EQ(1, run_main_int64(
+        "proc main() -> int { int s = 0; int i = 0; while i < 100000 { s = s + 3000000000; i = i + 1; } return s; }",
+        &result));
+    ASSERT_INT64_EQ(INT64_C(300000000000000), result);
+}
+
+TEST(compiler_int_literal_beyond_64_bits_is_rejected) {
+    Chunk chunk;
+    init_chunk(&chunk);
+    char error[256] = {0};
+    ASSERT_INT_EQ(0, compile("proc main() -> int { return 9223372036854775808; }",
+                             &chunk, error, sizeof(error)));
+    ASSERT_INT_EQ(1, strstr(error, "integer literal too large") != NULL);
+    free_chunk(&chunk);
+}
+
+TEST(compiler_array_index_beyond_int_range_is_out_of_bounds) {
+    /* 2^32 would wrap to index 0 if it were narrowed to a C int. */
+    int64_t result = 0;
+    ASSERT_INT_EQ(1, run_main_int64(
+        "proc main() -> int { array<int> xs = [7, 8]; "
+        "try { int v = xs[4294967296]; return v; } catch (e) { return -1; } }",
+        &result));
+    ASSERT_INT64_EQ(-1, result);
+    ASSERT_INT_EQ(1, run_main_int64(
+        "proc main() -> int { array<int> xs = [7, 8]; "
+        "try { xs[4294967296] = 1; return xs[0]; } catch (e) { return -1; } }",
+        &result));
+    ASSERT_INT64_EQ(-1, result);
+}
+
+TEST(compiler_map_int_keys_beyond_32_bits_are_distinct) {
+    int64_t result = 0;
+    ASSERT_INT_EQ(1, run_main_int64(
+        "proc main() -> int { map<int, int> m; m[1] = 10; m[4294967297] = 20; "
+        "m[-4294967295] = 30; return m[1] * 10000 + m[4294967297] * 100 + m[-4294967295]; }",
+        &result));
+    ASSERT_INT64_EQ(INT64_C(102030), result);
+}
 int main(void) {
     RUN_TEST(compiler_compiles_integer_return);
     RUN_TEST(compiler_compiles_local_variables);
@@ -1614,5 +1689,9 @@ int main(void) {
     RUN_TEST(compiler_compiles_sort_native);
     RUN_TEST(compiler_compiles_reverse_native);
     RUN_TEST(compiler_compiles_clamp_native);
+    RUN_TEST(compiler_int_is_64_bit);
+    RUN_TEST(compiler_int_literal_beyond_64_bits_is_rejected);
+    RUN_TEST(compiler_array_index_beyond_int_range_is_out_of_bounds);
+    RUN_TEST(compiler_map_int_keys_beyond_32_bits_are_distinct);
     TEST_SUMMARY();
 }

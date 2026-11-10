@@ -1518,7 +1518,7 @@ static void cmd_count(ReplSession* session, const char* table_name) {
             return;
         }
         void* row = NULL;
-        int n = 0;
+        int64_t n = 0;
         if (session->driver.result_next(&session->driver, result, &row)) {
             Value v;
             if (session->driver.row_get_column(&session->driver, row, 0, &v)) {
@@ -1526,7 +1526,7 @@ static void cmd_count(ReplSession* session, const char* table_name) {
                 value_release(v);
             }
         }
-        printf("%s: %d rows\n", table_name, n);
+        printf("%s: %" PRId64 " rows\n", table_name, n);
         session->driver.result_free(&session->driver, result);
         return;
     }
@@ -1535,7 +1535,7 @@ static void cmd_count(ReplSession* session, const char* table_name) {
     char query[512];
     snprintf(query, sizeof(query), "SELECT count(*) FROM %.400s", table_name);
     Result* res = sql_exec(query, &session->ctx);
-    int n = 0;
+    int64_t n = 0;
     if (res != NULL) {
         Row* row = result_next(res);
         if (row != NULL && row->field_count > 0) {
@@ -1544,7 +1544,7 @@ static void cmd_count(ReplSession* session, const char* table_name) {
         }
         result_free(res);
     }
-    printf("%s: %d rows\n", table_name, n);
+    printf("%s: %" PRId64 " rows\n", table_name, n);
 }
 
 static void cmd_indexes(ReplSession* session, const char* table_name) {
