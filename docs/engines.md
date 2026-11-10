@@ -29,8 +29,12 @@ scratch work. In the REPL, `.connect <path>` switches sessions.
 
 A small engine built into the binary: a file-backed catalog page plus row
 pages, secondary indexes as page-based B+ trees, and a growing catalog format
-(currently V5) that also stores constraints, views, and sequences. Without
-`--db`, the CLI opens `auspex.db` in the working directory.
+(currently V7) that also stores constraints, views, and sequences. V7 stores
+ints as 64-bit values. A database written by an older build is upgraded the
+first time it is opened: its rows are read as they are, its int and bool
+indexes are rebuilt and the catalog is rewritten as V7, after which builds
+from before V7 cannot open it. Without `--db`, the CLI opens `auspex.db` in
+the working directory.
 
 Supported:
 

@@ -31,6 +31,13 @@ array<int> nums = [1, 2, 3];
 map<string, int> ages = {"alice": 30, "bob": 25};
 ```
 
+`int` is a 64-bit signed integer, from -9223372036854775808 to
+9223372036854775807. Arithmetic whose result falls outside that range raises a
+runtime error, `numeric overflow` (`sqlcode` -1426), rather than wrapping, and
+so do `round`, `floor` and `ceil` on a float too large for an int. The largest
+literal is 9223372036854775807; the smallest int is written
+`-9223372036854775807 - 1`, since `-` applies to the literal after it.
+
 ### Parameter modes
 
 ```auspex
@@ -222,7 +229,9 @@ parentheses, with `i` for int, `d` for float (C `double`) and `s` for string
 (`const char*`), and up to four arguments. The signature must be a string
 literal; the compiler checks the arguments against it and gives the call its
 return type. It has to match the C prototype exactly: `i` is a C `int`, so a
-`long` or `size_t` parameter is not one.
+`long` or `size_t` parameter is not one. An Auspex `int` is 64-bit, so an
+argument outside the C `int` range is an error rather than a truncated value
+(this applies to `external_call` as well).
 
 ```auspex
 // double pow(double, double)
