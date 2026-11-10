@@ -11,9 +11,9 @@
 typedef struct {
     int type; /* VAL_INT, VAL_FLOAT, VAL_STRING */
     union {
-        int    as_int;
-        double as_float;
-        char*  as_string;
+        int64_t as_int;  /* int (64-bit) or bool (0/1) */
+        double  as_float;
+        char*   as_string;
     } as;
 } Cell;
 
@@ -84,15 +84,16 @@ void   catalog_insert(Context* ctx, Table* table, Cell* cells);
    with that name exists. */
 const char* catalog_view_query(Context* ctx, const char* name);
 
-/* Sequences (catalog format V5). A sequence persists its name, increment,
-   last-issued value, and whether a value was ever issued (has_value). */
+/* Sequences (catalog format V5, 64-bit values since V7). A sequence persists
+   its name, increment, last-issued value, and whether a value was ever issued
+   (has_value). */
 #define DB_SEQUENCE_NAME_MAX 64
 
 typedef struct {
-    char name[DB_SEQUENCE_NAME_MAX];
-    int  has_value;
-    int  current;
-    int  increment;
+    char    name[DB_SEQUENCE_NAME_MAX];
+    int     has_value;
+    int64_t current;
+    int64_t increment;
 } DBSequence;
 
 /* Copies up to `max` catalog sequences into `out`; returns the count. */

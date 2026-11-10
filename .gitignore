@@ -32,3 +32,5 @@ AGENTS.md
 
 # Worktrees
 .worktrees/
+# ...except checked-in database fixtures
+!tests/data/*.db

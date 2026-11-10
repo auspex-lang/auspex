@@ -2106,6 +2106,160 @@ TEST(sql_filtered_scan_returns_owned_copies_of_matching_rows) {
     cleanup(path);
 }
 
+/* ---- 64-bit ints and the V6 -> V7 catalog upgrade (#112) --------------- */
+
+/* tests/data/catalog_v6_int32.db was written by the engine before ints were
+   64-bit (catalog V6, 4-byte int cells and keys): table nums (id INT PRIMARY
+   KEY, flag BOOL, price FLOAT, name STRING, qty INT DEFAULT 7) holding ids
+   INT32_MIN, -5, 1, 3 and INT32_MAX, indexes on id, name and flag, and
+   sequence nums_seq (current 41, increment 2). Opening a database upgrades it
+   in place, so the tests work on a copy. */
+static char* copy_v6_fixture(void) {
+    char* path = make_temp_path();
+    FILE* in = fopen("tests/data/catalog_v6_int32.db", "rb");
+    FILE* out = fopen(path, "wb");
+    if (in == NULL || out == NULL) {
+        if (in != NULL) fclose(in);
+        if (out != NULL) fclose(out);
+        free(path);
+        return NULL;
+    }
+    char buf[4096];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), in)) > 0) fwrite(buf, 1, n, out);
+    fclose(in);
+    fclose(out);
+    return path;
+}
+
+static uint32_t catalog_magic_on_disk(const char* path) {
+    uint32_t magic = 0;
+    FILE* f = fopen(path, "rb");
+    if (f == NULL) return 0;
+    if (fseek(f, 4096, SEEK_SET) != 0 || fread(&magic, sizeof(magic), 1, f) != 1) magic = 0;
+    fclose(f);
+    return magic;
+}
+
+static int64_t first_int(Context* ctx, const char* query, const char* column) {
+    Result* res = sql_exec(query, ctx);
+    int64_t v = INT64_MIN;
+    if (res != NULL && res->row_count > 0) v = row_get_field(&res->rows[0], column).as.as_int;
+    result_free(res);
+    return v;
+}
+
+TEST(sql_v6_database_loads_and_is_upgraded_to_v7) {
+    char* path = copy_v6_fixture();
+    ASSERT_PTR_NOT_NULL(path);
+    ASSERT_INT_EQ(0x4D595636, (int)catalog_magic_on_disk(path)); /* "MYV6" */
+
+    Context ctx = {path, NULL};
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    ASSERT_INT_EQ(0x4D595637, (int)catalog_magic_on_disk(path)); /* "MYV7" */
+
+    /* Every 4-byte cell still decodes, including both 32-bit extremes. */
+    Result* res = sql_exec("SELECT id, flag, price, name, qty FROM nums ORDER BY id", &ctx);
+    ASSERT_PTR_NOT_NULL(res);
+    ASSERT_INT_EQ(5, res->row_count);
+    ASSERT(row_get_field(&res->rows[0], "id").as.as_int == INT32_MIN);
+    ASSERT_STRING_EQ("min", row_get_field(&res->rows[0], "name").as.as_string);
+    ASSERT(row_get_field(&res->rows[1], "id").as.as_int == -5);
+    ASSERT(row_get_field(&res->rows[4], "id").as.as_int == INT32_MAX);
+    ASSERT_INT_EQ(VAL_BOOL, row_get_field(&res->rows[2], "flag").type);
+    ASSERT_FLOAT_EQ(2.5, row_get_field(&res->rows[2], "price").as.as_float);
+    ASSERT(row_get_field(&res->rows[2], "qty").as.as_int == 10);
+    result_free(res);
+
+    /* The rebuilt int and bool indexes serve lookups, and the string index
+       (whose encoding did not change) still does. */
+    ASSERT_INT_EQ(1, count_rows(&ctx, "SELECT id FROM nums WHERE id = 2147483647"));
+    ASSERT_INT_EQ(2, count_rows(&ctx, "SELECT id FROM nums WHERE id < 0"));
+    ASSERT_INT_EQ(3, count_rows(&ctx, "SELECT id FROM nums WHERE id >= 1"));
+    ASSERT_INT_EQ(3, count_rows(&ctx, "SELECT id FROM nums WHERE flag = true"));
+    ASSERT_INT_EQ(1, count_rows(&ctx, "SELECT id FROM nums WHERE name = 'max'"));
+
+    DBSequence seqs[4];
+    ASSERT_INT_EQ(1, catalog_sequence_list(&ctx, seqs, 4));
+    ASSERT_STRING_EQ("nums_seq", seqs[0].name);
+    ASSERT(seqs[0].current == 41);
+    ASSERT(seqs[0].increment == 2);
+    catalog_close(&ctx);
+    cleanup(path);
+}
+
+TEST(sql_v6_database_takes_64_bit_rows_after_upgrade) {
+    char* path = copy_v6_fixture();
+    ASSERT_PTR_NOT_NULL(path);
+    Context ctx = {path, NULL};
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    /* New 8-byte cells sit in the same table as the old 4-byte ones, and the
+       DEFAULT read from the V6 catalog still applies. */
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO nums VALUES (3000000000, false, 1.0, 'big', NULL)", &ctx));
+    catalog_close(&ctx);
+
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    ASSERT_INT_EQ(6, count_rows(&ctx, "SELECT id FROM nums"));
+    ASSERT_INT_EQ(1, count_rows(&ctx, "SELECT id FROM nums WHERE id > 2147483647"));
+    ASSERT(first_int(&ctx, "SELECT qty FROM nums WHERE id = 3000000000", "qty") == 7);
+    ASSERT(first_int(&ctx, "SELECT id FROM nums ORDER BY id DESC", "id") == INT64_C(3000000000));
+    /* PRIMARY KEY still sees the old rows. */
+    ASSERT_INT_EQ(0, sql_exec_ddl("INSERT INTO nums VALUES (2147483647, true, 0.0, 'dup', 1)", &ctx));
+    catalog_close(&ctx);
+    cleanup(path);
+}
+
+TEST(sql_int_cells_and_keys_are_64_bit) {
+    char* path = make_temp_path();
+    Context ctx = {path, NULL};
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("CREATE TABLE big (id INT, n INT DEFAULT 9223372036854775807)", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("CREATE INDEX big_id ON big (id)", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO big VALUES (9223372036854775807, 1)", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO big VALUES (4294967296, 2)", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO big VALUES (4294967295, 3)", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO big VALUES (0, NULL)", &ctx));
+    catalog_close(&ctx);
+
+    /* Values, the DEFAULT and the index all survive a reopen at full width,
+       and keys above 2^32 order correctly (a 32-bit key would wrap them). */
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    ASSERT_INT_EQ(0x4D595637, (int)catalog_magic_on_disk(path));
+    ASSERT(first_int(&ctx, "SELECT n FROM big WHERE id = 9223372036854775807", "n") == 1);
+    ASSERT(first_int(&ctx, "SELECT n FROM big WHERE id = 0", "n") == INT64_MAX);
+    ASSERT_INT_EQ(2, count_rows(&ctx, "SELECT id FROM big WHERE id >= 4294967296"));
+    ASSERT_INT_EQ(1, count_rows(&ctx, "SELECT id FROM big WHERE id < 4294967296 AND id > 0"));
+    ASSERT(first_int(&ctx, "SELECT id FROM big ORDER BY id DESC", "id") == INT64_MAX);
+
+    /* An int literal outside the 64-bit range is an error, not a wrap. */
+    ASSERT_INT_EQ(0, sql_exec_ddl("INSERT INTO big VALUES (9223372036854775808, 1)", &ctx));
+    ASSERT_INT_EQ(4, count_rows(&ctx, "SELECT id FROM big"));
+    catalog_close(&ctx);
+    cleanup(path);
+}
+
+TEST(sql_sequences_persist_64_bit_values) {
+    char* path = make_temp_path();
+    Context ctx = {path, NULL};
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    DBSequence seq;
+    memset(&seq, 0, sizeof(seq));
+    strcpy(seq.name, "ids");
+    seq.has_value = 1;
+    seq.current = INT64_C(5000000000);
+    seq.increment = INT64_C(-3000000000);
+    ASSERT_INT_EQ(1, catalog_sequence_save(&ctx, &seq));
+    catalog_close(&ctx);
+
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    DBSequence out[2];
+    ASSERT_INT_EQ(1, catalog_sequence_list(&ctx, out, 2));
+    ASSERT(out[0].current == INT64_C(5000000000));
+    ASSERT(out[0].increment == INT64_C(-3000000000));
+    catalog_close(&ctx);
+    cleanup(path);
+}
+
 int main(void) {
     RUN_TEST(sql_scan_returns_rows_from_full_middle_pages);
     RUN_TEST(sql_index_build_sees_rows_on_full_middle_pages);
@@ -2178,5 +2332,9 @@ int main(void) {
     RUN_TEST(sql_update_in_place_enforces_not_null);
     RUN_TEST(sql_delete_in_place_moves_index_entries_of_shifted_rows);
     RUN_TEST(sql_filtered_scan_returns_owned_copies_of_matching_rows);
+    RUN_TEST(sql_v6_database_loads_and_is_upgraded_to_v7);
+    RUN_TEST(sql_v6_database_takes_64_bit_rows_after_upgrade);
+    RUN_TEST(sql_int_cells_and_keys_are_64_bit);
+    RUN_TEST(sql_sequences_persist_64_bit_values);
     TEST_SUMMARY();
 }

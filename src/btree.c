@@ -88,13 +88,15 @@ static void encode_key(const Cell* cell, uint8_t* out) {
     if (cell->type == VAL_INT || cell->type == VAL_BOOL) {
         /* A bool rides in the int key space as 0 or 1: false orders before
            true, and no new tag is needed. A column is one type, so the spaces
-           never mix in a single index. */
-        uint32_t u = ((uint32_t)(int32_t)cell->as.as_int) ^ 0x80000000u;
+           never mix in a single index. Big-endian with the sign bit flipped,
+           so byte order is numeric order. Catalog V6 and older encoded only
+           the low 32 bits here; such indexes are rebuilt when the database
+           is first opened (see catalog_upgrade_int64). */
+        uint64_t u = ((uint64_t)cell->as.as_int) ^ 0x8000000000000000ULL;
         out[0] = 1;
-        out[1] = (uint8_t)(u >> 24);
-        out[2] = (uint8_t)(u >> 16);
-        out[3] = (uint8_t)(u >> 8);
-        out[4] = (uint8_t)u;
+        for (int i = 0; i < 8; i++) {
+            out[1 + i] = (uint8_t)(u >> (56 - 8 * i));
+        }
         return;
     }
     if (cell->type == VAL_FLOAT) {

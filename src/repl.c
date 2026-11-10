@@ -1,4 +1,5 @@
 #include <ctype.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1311,7 +1312,7 @@ static void cmd_sql(ReplSession* session, const char* query) {
                 printf("%s = ", row->fields[i].name);
                 Cell c = row->fields[i].value;
                 switch (c.type) {
-                    case VAL_INT: printf("%d", c.as.as_int); break;
+                    case VAL_INT: printf("%" PRId64, c.as.as_int); break;
                     case VAL_FLOAT: printf("%g", c.as.as_float); break;
                     case VAL_STRING: printf("%s", c.as.as_string ? c.as.as_string : ""); break;
                     default: printf("?"); break;

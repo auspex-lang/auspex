@@ -1,4 +1,5 @@
 #include <ctype.h>
+#include <errno.h>
 #include <math.h>
 #include <stdint.h>
 #include <limits.h>
@@ -24,6 +25,9 @@
 static Table* g_catalog[MAX_CATALOG_TABLES];
 static int    g_catalog_count = 0;
 static int    g_catalog_page  = -1;
+/* Format of the catalog page as loaded (1 for a fresh file); see the
+   format notes above catalog_read_cell. */
+static int    g_catalog_version = 0;
 
 /* Error detail for DDL/constraint failures, consumed by custom_exec so the
    runtime error message can name the violated constraint. */
@@ -38,10 +42,10 @@ static ViewDef g_views[MAX_CATALOG_VIEWS];
 static int     g_view_count = 0;
 
 typedef struct {
-    char* name;
-    int   has_value;
-    int   current;
-    int   increment;
+    char*   name;
+    int     has_value;
+    int64_t current;
+    int64_t increment;
 } SequenceDef;
 
 static SequenceDef g_sequences[MAX_CATALOG_SEQUENCES];
@@ -157,12 +161,23 @@ void catalog_clear(Context* ctx) {
    V5, but a column type may now be one of the extended scalars (bool today)
    as well as int, float and string. The layout is unchanged - the marker is
    what tells an older reader that a type tag it does not know may appear,
-   rather than letting it silently mis-handle one. */
+   rather than letting it silently mis-handle one. V7: ints are 64-bit. Int
+   cells (row values and DEFAULT literals) are written under CELL_TAG_INT64
+   with an 8-byte payload, sequences store i64 current and increment, and
+   int/bool index keys use the 64-bit encoding. The old 4-byte VAL_INT cells
+   still decode, so the rows of a V6 file are read in place and only a row
+   that is rewritten changes form; opening a V6 file rebuilds its int/bool
+   indexes (their key encoding changed) and rewrites the catalog as V7. */
 #define CATALOG_MAGIC_V2 0x4D594932u /* "MYI2" */
 #define CATALOG_MAGIC_V3 0x4D594333u /* "MYC3" */
 #define CATALOG_MAGIC_V4 0x4D595634u /* "MYV4" */
 #define CATALOG_MAGIC_V5 0x4D595635u /* "MYV5" */
 #define CATALOG_MAGIC_V6 0x4D595636u /* "MYV6" */
+#define CATALOG_MAGIC_V7 0x4D595637u /* "MYV7" */
+
+/* On-disk type tag of a 64-bit int cell. Tags are otherwise ValueType
+   numbers; a plain VAL_INT tag is a legacy cell with a 4-byte payload. */
+#define CELL_TAG_INT64 0x40
 
 /* Reads a serialized cell (type tag + payload) from the catalog page. */
 static int catalog_read_cell(uint8_t* page, int* offset, Cell* cell) {
@@ -173,11 +188,21 @@ static int catalog_read_cell(uint8_t* page, int* offset, Cell* cell) {
             cell->as.as_int = 0;
             return 1;
         case VAL_INT: {
+            /* Legacy (V6 and older) 4-byte int. */
             int32_t v = 0;
             if (*offset + 4 > PAGE_SIZE) return 0;
             memcpy(&v, page + *offset, sizeof(v));
             *offset += 4;
-            cell->as.as_int = (int)v;
+            cell->as.as_int = v;
+            return 1;
+        }
+        case CELL_TAG_INT64: {
+            int64_t v = 0;
+            if (*offset + 8 > PAGE_SIZE) return 0;
+            memcpy(&v, page + *offset, sizeof(v));
+            *offset += 8;
+            cell->type = VAL_INT;
+            cell->as.as_int = v;
             return 1;
         }
         case VAL_FLOAT: {
@@ -219,7 +244,7 @@ static int catalog_read_cell(uint8_t* page, int* offset, Cell* cell) {
 /* Writes a cell (type tag + payload) to the catalog page. */
 static int catalog_cell_size(const Cell* cell) {
     switch (cell->type) {
-        case VAL_INT:    return 1 + 4;
+        case VAL_INT:    return 1 + 8; /* written as CELL_TAG_INT64 */
         case VAL_BOOL:   return 1 + 4;
         case VAL_FLOAT:  return 1 + 8;
         case VAL_STRING:
@@ -231,12 +256,12 @@ static int catalog_cell_size(const Cell* cell) {
 }
 
 static void catalog_write_cell(uint8_t* page, int* offset, const Cell* cell) {
-    page[(*offset)++] = (uint8_t)cell->type;
+    page[(*offset)++] = cell->type == VAL_INT ? CELL_TAG_INT64 : (uint8_t)cell->type;
     switch (cell->type) {
         case VAL_INT: {
-            int32_t v = (int32_t)cell->as.as_int;
+            int64_t v = cell->as.as_int;
             memcpy(page + *offset, &v, sizeof(v));
-            *offset += 4;
+            *offset += 8;
             break;
         }
         case VAL_FLOAT: {
@@ -339,7 +364,12 @@ static int catalog_read_page(Context* ctx) {
         catalog_version = 6;
         memcpy(&table_count, page + offset, sizeof(table_count));
         offset += 4;
+    } else if (table_count == CATALOG_MAGIC_V7) {
+        catalog_version = 7;
+        memcpy(&table_count, page + offset, sizeof(table_count));
+        offset += 4;
     }
+    g_catalog_version = catalog_version;
 
     for (uint32_t t = 0; t < table_count && g_catalog_count < MAX_CATALOG_TABLES; t++) {
         Table* table = calloc(1, sizeof(Table));
@@ -460,10 +490,12 @@ static int catalog_read_page(Context* ctx) {
     if (catalog_version >= 5 && offset < PAGE_SIZE) {
         uint8_t sequence_count = page[offset++];
         if (sequence_count > MAX_CATALOG_SEQUENCES) sequence_count = MAX_CATALOG_SEQUENCES;
+        /* V5/V6 store i32 current and increment, V7 stores i64. */
+        int value_size = catalog_version >= 7 ? 8 : 4;
         for (int i = 0; i < (int)sequence_count; i++) {
             if (offset >= PAGE_SIZE) return 0;
             uint8_t name_len = page[offset++];
-            if (offset + name_len + 9 > PAGE_SIZE) return 0;
+            if (offset + name_len + 1 + 2 * value_size > PAGE_SIZE) return 0;
             char* name = malloc((size_t)name_len + 1);
             if (name == NULL) return 0;
             memcpy(name, page + offset, name_len);
@@ -471,17 +503,25 @@ static int catalog_read_page(Context* ctx) {
             offset += name_len;
 
             int has_value = page[offset++];
-            int32_t current = 0;
-            memcpy(&current, page + offset, sizeof(current));
-            offset += 4;
-            int32_t increment = 0;
-            memcpy(&increment, page + offset, sizeof(increment));
-            offset += 4;
+            int64_t current = 0;
+            int64_t increment = 0;
+            if (value_size == 8) {
+                memcpy(&current, page + offset, sizeof(current));
+                memcpy(&increment, page + offset + 8, sizeof(increment));
+            } else {
+                int32_t c32 = 0;
+                int32_t i32 = 0;
+                memcpy(&c32, page + offset, sizeof(c32));
+                memcpy(&i32, page + offset + 4, sizeof(i32));
+                current = c32;
+                increment = i32;
+            }
+            offset += 2 * value_size;
 
             g_sequences[g_sequence_count].name = name;
             g_sequences[g_sequence_count].has_value = has_value;
-            g_sequences[g_sequence_count].current = (int)current;
-            g_sequences[g_sequence_count].increment = (int)increment;
+            g_sequences[g_sequence_count].current = current;
+            g_sequences[g_sequence_count].increment = increment;
             g_sequence_count++;
         }
     }
@@ -544,7 +584,7 @@ static int catalog_write_page(Context* ctx) {
     memset(page, 0, PAGE_SIZE);
 
     int offset = 0;
-    uint32_t magic = CATALOG_MAGIC_V6;
+    uint32_t magic = CATALOG_MAGIC_V7;
     memcpy(page + offset, &magic, sizeof(magic));
     offset += 4;
     uint32_t table_count = (uint32_t)g_catalog_count;
@@ -633,23 +673,22 @@ static int catalog_write_page(Context* ctx) {
     int seq_count_pos = offset++;
     for (int i = 0; i < g_sequence_count; i++) {
         size_t seq_name_len = strlen(g_sequences[i].name);
-        if (offset + 10 + (int)seq_name_len > PAGE_SIZE) {
+        if (offset + 18 + (int)seq_name_len > PAGE_SIZE) {
             return 0;
         }
         page[offset++] = (uint8_t)seq_name_len;
         memcpy(page + offset, g_sequences[i].name, seq_name_len);
         offset += (int)seq_name_len;
         page[offset++] = (uint8_t)g_sequences[i].has_value;
-        int32_t v32 = (int32_t)g_sequences[i].current;
-        memcpy(page + offset, &v32, sizeof(v32));
-        offset += 4;
-        v32 = (int32_t)g_sequences[i].increment;
-        memcpy(page + offset, &v32, sizeof(v32));
-        offset += 4;
+        memcpy(page + offset, &g_sequences[i].current, sizeof(int64_t));
+        offset += 8;
+        memcpy(page + offset, &g_sequences[i].increment, sizeof(int64_t));
+        offset += 8;
     }
     page[seq_count_pos] = (uint8_t)g_sequence_count;
 
     pager_write_page(pager, g_catalog_page, page);
+    g_catalog_version = 7;
     return 1;
 }
 
@@ -657,12 +696,21 @@ static int catalog_write_page(Context* ctx) {
 /* Catalog API                                                                */
 /* -------------------------------------------------------------------------- */
 
+static int catalog_upgrade_int64(Context* ctx);
+
 int catalog_open(Context* ctx) {
     if (ctx == NULL || ctx->db_path == NULL) return 0;
     ctx->pager = pager_open(ctx->db_path);
     if (ctx->pager == NULL) return 0;
     catalog_clear(ctx);
-    return catalog_read_page(ctx);
+    if (!catalog_read_page(ctx)) return 0;
+    /* A file from before catalog V7 is brought forward as soon as it is
+       opened, so a 64-bit cell is never written next to a V6 marker that an
+       older build would trust. A fresh file has nothing to convert. */
+    if (g_catalog_version < 7 && (g_catalog_count > 0 || g_sequence_count > 0)) {
+        return catalog_upgrade_int64(ctx);
+    }
+    return 1;
 }
 
 void catalog_close(Context* ctx) {
@@ -822,7 +870,7 @@ static int row_record_size(Table* table, Cell* cells) {
     for (int i = 0; i < table->column_count; i++) {
         size += 1; /* type tag */
         switch (cells[i].type) {
-            case VAL_INT:    size += 4; break;
+            case VAL_INT:    size += 8; break; /* CELL_TAG_INT64 */
             case VAL_FLOAT:  size += 8; break;
             case VAL_STRING:
             case VAL_DATE:
@@ -841,10 +889,10 @@ static int row_record_size(Table* table, Cell* cells) {
 static void serialize_row(Table* table, Cell* cells, uint8_t* out) {
     int offset = 2; /* length prefix */
     for (int i = 0; i < table->column_count; i++) {
-        out[offset++] = (uint8_t)cells[i].type;
+        out[offset++] = cells[i].type == VAL_INT ? CELL_TAG_INT64 : (uint8_t)cells[i].type;
         switch (cells[i].type) {
             case VAL_INT: {
-                int32_t v = (int32_t)cells[i].as.as_int;
+                int64_t v = cells[i].as.as_int;
                 memcpy(out + offset, &v, sizeof(v));
                 offset += sizeof(v);
                 break;
@@ -867,8 +915,8 @@ static void serialize_row(Table* table, Cell* cells, uint8_t* out) {
                 break;
             }
             case VAL_BOOL: {
-                /* Stored in the same four bytes an int uses: a bool column is
-                   0 or 1 and its own tag keeps it distinguishable. */
+                /* Four bytes, as a legacy int: a bool column is 0 or 1 and
+                   its own tag keeps it distinguishable. */
                 int32_t v = cells[i].as.as_int != 0 ? 1 : 0;
                 memcpy(out + offset, &v, sizeof(v));
                 offset += sizeof(v);
@@ -896,10 +944,19 @@ static int deserialize_cell(const uint8_t* data, int* offset, Cell* cell) {
             cell->as.as_int = 0;
             return 1;
         case VAL_INT: {
+            /* Legacy 4-byte int, from a row written before catalog V7. */
             int32_t v = 0;
             memcpy(&v, data + *offset, sizeof(v));
             *offset += sizeof(v);
-            cell->as.as_int = (int)v;
+            cell->as.as_int = v;
+            return 1;
+        }
+        case CELL_TAG_INT64: {
+            int64_t v = 0;
+            memcpy(&v, data + *offset, sizeof(v));
+            *offset += sizeof(v);
+            cell->type = VAL_INT;
+            cell->as.as_int = v;
             return 1;
         }
         case VAL_FLOAT: {
@@ -2109,7 +2166,7 @@ static void sql_free_select_stmt(SelectStmt* stmt) {
     stmt->where = NULL;
 }
 
-static Cell cell_from_int(int v) {
+static Cell cell_from_int(int64_t v) {
     Cell c;
     c.type = VAL_INT;
     c.as.as_int = v;
@@ -2142,12 +2199,13 @@ static int cell_compare(Cell* a, Cell* b) {
     }
     /* false sorts before true, and a bool compares with an int by its 0/1
        value, which is how the runtime already treats it. */
-    if (a->type == VAL_BOOL && b->type == VAL_BOOL) {
-        return a->as.as_int - b->as.as_int;
-    }
-    if ((a->type == VAL_BOOL && b->type == VAL_INT) ||
-        (a->type == VAL_INT && b->type == VAL_BOOL)) {
-        return a->as.as_int - b->as.as_int;
+    if ((a->type == VAL_BOOL || a->type == VAL_INT) &&
+        (b->type == VAL_BOOL || b->type == VAL_INT)) {
+        /* Compared, not subtracted: the difference of two 64-bit ints
+           need not fit an int (or an int64_t). */
+        if (a->as.as_int < b->as.as_int) return -1;
+        if (a->as.as_int > b->as.as_int) return 1;
+        return 0;
     }
     if (a->type == VAL_FLOAT || b->type == VAL_FLOAT) {
         double av = (a->type == VAL_FLOAT) ? a->as.as_float : (double)a->as.as_int;
@@ -2667,11 +2725,23 @@ static int conjunct_matches_index(WhereNode* node, Table* table, TableIndex* idx
 
 /* Runs one pass over the int key space and one over the float key space.
    Each pass is bounded inside its own space so no cell is reported twice:
-   the int space spans [INT32_MIN, INT32_MAX], the float space [-inf, +inf]. */
+   the int space spans [INT64_MIN, INT64_MAX], the float space [-inf, +inf]. */
 static int index_scan_numeric(BTree* tree, WhereNode* node, IndexScanCtx* scan) {
     Cell* lit = &node->literal;
     double dval = lit->type == VAL_FLOAT ? lit->as.as_float : (double)lit->as.as_int;
-    int    ival = lit->type == VAL_INT ? lit->as.as_int : (int)dval;
+    /* The literal in the int space. A float is truncated toward zero and
+       clamped to the int64 range, since converting an out-of-range double is
+       undefined; the bound widening below keeps the scan a superset. */
+    int64_t ival;
+    if (lit->type == VAL_INT) {
+        ival = lit->as.as_int;
+    } else if (!(dval >= -9223372036854775808.0)) {
+        ival = INT64_MIN;
+    } else if (dval >= 9223372036854775808.0) {
+        ival = INT64_MAX;
+    } else {
+        ival = (int64_t)dval;
+    }
 
     for (int space = 0; space < 2; space++) {
         Cell key;
@@ -2681,9 +2751,9 @@ static int index_scan_numeric(BTree* tree, WhereNode* node, IndexScanCtx* scan) 
             key.type = VAL_INT;
             key.as.as_int = ival;
             lo_bound.type = VAL_INT;
-            lo_bound.as.as_int = INT32_MIN;
+            lo_bound.as.as_int = INT64_MIN;
             hi_bound.type = VAL_INT;
-            hi_bound.as.as_int = INT32_MAX;
+            hi_bound.as.as_int = INT64_MAX;
         } else {
             key.type = VAL_FLOAT;
             key.as.as_float = dval;
@@ -2717,11 +2787,11 @@ static int index_scan_numeric(BTree* tree, WhereNode* node, IndexScanCtx* scan) 
            for integral literals). */
         if (space == 0 && lit->type == VAL_FLOAT) {
             if (lo == &key) {
-                key.as.as_int = ival - 1;
+                key.as.as_int = ival > INT64_MIN ? ival - 1 : ival;
                 lo_inc = 1;
             }
             if (hi == &key) {
-                key.as.as_int = ival + 1;
+                key.as.as_int = ival < INT64_MAX ? ival + 1 : ival;
                 hi_inc = 1;
             }
         }
@@ -3262,8 +3332,15 @@ static int sql_parse_literal_cell(SqlToken* tok, Cell* out) {
             out->type = VAL_FLOAT;
             out->as.as_float = strtod(buf, NULL);
         } else {
+            errno = 0;
+            long long v = strtoll(buf, NULL, 10);
+            if (errno == ERANGE || tok->length >= (int)sizeof(buf)) {
+                snprintf(g_sql_ddl_error, sizeof(g_sql_ddl_error),
+                         "integer literal %.40s out of range", buf);
+                return 0;
+            }
             out->type = VAL_INT;
-            out->as.as_int = atoi(buf);
+            out->as.as_int = (int64_t)v;
         }
         return 1;
     }
@@ -5288,6 +5365,37 @@ static int index_build_from_rows(Context* ctx, Table* table, int column, BTree* 
         page_num = row_page_next(pager, page);
     }
     return 1;
+}
+
+/* Brings a database written before catalog V7 forward (see the format notes
+   above catalog_read_cell): int and bool index keys switched to the 64-bit
+   encoding, so those indexes are rebuilt from the rows, then the catalog page
+   is rewritten as V7 (64-bit sequences). Rows are left alone; their 4-byte
+   int cells keep decoding. Returns 0 if an index cannot be rebuilt. */
+static int catalog_upgrade_int64(Context* ctx) {
+    for (int t = 0; t < g_catalog_count; t++) {
+        Table* table = g_catalog[t];
+        for (int i = 0; i < table->index_count; i++) {
+            TableIndex* idx = &table->indexes[i];
+            int column = table_column_index(table, idx->column_name);
+            if (column < 0) continue;
+            int type = table->columns[column].type;
+            if (type != VAL_INT && type != VAL_BOOL) continue;
+
+            BTree* old = btree_open(ctx->pager, idx->root_page);
+            if (old != NULL) {
+                btree_free_pages(old);
+                btree_destroy(old);
+            }
+            BTree* fresh = btree_create(ctx->pager);
+            if (fresh == NULL) return 0;
+            int ok = index_build_from_rows(ctx, table, column, fresh);
+            idx->root_page = btree_root_page(fresh);
+            btree_destroy(fresh);
+            if (!ok) return 0;
+        }
+    }
+    return catalog_write_page(ctx);
 }
 
 static int execute_create_index(Context* ctx, const char* index_name,
