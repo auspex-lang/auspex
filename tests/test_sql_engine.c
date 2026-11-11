@@ -2208,6 +2208,35 @@ TEST(sql_unique_check_survives_a_dropped_or_missing_index) {
     cleanup(path);
 }
 
+TEST(sql_update_duplicate_check_sorts_the_row_set) {
+    char* path = make_temp_path();
+    Context ctx = {path, NULL};
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("CREATE TABLE t (id INT PRIMARY KEY, code STRING UNIQUE, n INT)", &ctx));
+    for (int i = 0; i < 300; i++) {
+        char sql[128];
+        if (i % 3 == 0) {
+            snprintf(sql, sizeof(sql), "INSERT INTO t VALUES (%d, NULL, %d)", i, i % 7);
+        } else {
+            snprintf(sql, sizeof(sql), "INSERT INTO t VALUES (%d, 'c%d', %d)", i, i, i % 7);
+        }
+        ASSERT_INT_EQ(1, sql_exec_ddl(sql, &ctx));
+    }
+    /* Distinct values (and any number of NULLs) pass. */
+    ASSERT_INT_EQ(1, sql_exec_ddl("UPDATE t SET n = 5 WHERE n = 6", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("UPDATE t SET code = NULL WHERE n = 5", &ctx));
+    /* One value given to two rows is rejected, wherever in the set they are,
+       and nothing is written. */
+    ASSERT_INT_EQ(0, sql_exec_ddl("UPDATE t SET code = 'same' WHERE n = 4", &ctx));
+    ASSERT_INT_EQ(0, unique_rows(&ctx, "SELECT id FROM t WHERE code = 'same'"));
+    ASSERT_INT_EQ(0, sql_exec_ddl("UPDATE t SET code = 'c1' WHERE id = 298", &ctx));
+    ASSERT_INT_EQ(1, unique_rows(&ctx, "SELECT id FROM t WHERE code = 'c298'"));
+    ASSERT_INT_EQ(1, sql_exec_ddl("UPDATE t SET code = 'only' WHERE id = 1", &ctx));
+    ASSERT_INT_EQ(1, unique_rows(&ctx, "SELECT id FROM t WHERE code = 'only'"));
+    catalog_close(&ctx);
+    cleanup(path);
+}
+
 int main(void) {
     RUN_TEST(sql_scan_returns_rows_from_full_middle_pages);
     RUN_TEST(sql_index_build_sees_rows_on_full_middle_pages);
@@ -2283,5 +2312,6 @@ int main(void) {
     RUN_TEST(sql_unique_checks_reject_duplicates_through_the_index);
     RUN_TEST(sql_unique_check_matches_an_int_against_a_stored_float);
     RUN_TEST(sql_unique_check_survives_a_dropped_or_missing_index);
+    RUN_TEST(sql_update_duplicate_check_sorts_the_row_set);
     TEST_SUMMARY();
 }

@@ -3777,6 +3777,11 @@ static int constraints_check_new_row(Context* ctx, Table* table, Cell* cells) {
     return 1;
 }
 
+/* qsort comparator over Cell pointers, ordering by cell_compare. */
+static int cell_ptr_compare(const void* a, const void* b) {
+    return cell_compare(*(Cell* const*)a, *(Cell* const*)b);
+}
+
 /* Validates a full in-memory row set (used by UPDATE after mutation, before
    the row chain is rewritten). */
 static int constraints_check_row_set(Table* table, Row* rows, int row_count) {
@@ -3792,24 +3797,33 @@ static int constraints_check_row_set(Table* table, Row* rows, int row_count) {
             }
         }
     }
+    /* Duplicates in a column are found by sorting its non-NULL values and
+       comparing neighbours, O(n log n) instead of comparing every pair. */
+    Cell** values = row_count > 0 ? malloc(sizeof(Cell*) * (size_t)row_count) : NULL;
+    if (row_count > 0 && values == NULL) {
+        snprintf(g_sql_ddl_error, sizeof(g_sql_ddl_error), "out of memory");
+        return 0;
+    }
     for (int c = 0; c < table->column_count; c++) {
         int flags = table->columns[c].flags;
         if (!(flags & (COL_FLAG_UNIQUE | COL_FLAG_PRIMARY_KEY))) continue;
+        int n = 0;
         for (int i = 0; i < row_count; i++) {
-            Cell* a = &rows[i].fields[c].value;
-            if (a->type == VAL_NULL) continue;
-            for (int j = i + 1; j < row_count; j++) {
-                Cell* b = &rows[j].fields[c].value;
-                if (b->type == VAL_NULL) continue;
-                if (cell_compare(a, b) == 0) {
-                    snprintf(g_sql_ddl_error, sizeof(g_sql_ddl_error),
-                             "%s constraint violated: %s.%s",
-                             constraint_label(flags), table->name, table->columns[c].name);
-                    return 0;
-                }
+            Cell* v = &rows[i].fields[c].value;
+            if (v->type != VAL_NULL) values[n++] = v;
+        }
+        qsort(values, (size_t)n, sizeof(Cell*), cell_ptr_compare);
+        for (int i = 1; i < n; i++) {
+            if (cell_compare(values[i - 1], values[i]) == 0) {
+                snprintf(g_sql_ddl_error, sizeof(g_sql_ddl_error),
+                         "%s constraint violated: %s.%s",
+                         constraint_label(flags), table->name, table->columns[c].name);
+                free(values);
+                return 0;
             }
         }
     }
+    free(values);
     return 1;
 }
 
