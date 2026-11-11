@@ -3617,33 +3617,157 @@ static int constraints_apply_row(Table* table, Cell* cells) {
     return 1;
 }
 
-/* Checks UNIQUE / PRIMARY KEY for a new row against the rows already stored.
-   NULL values never conflict (SQL-standard UNIQUE semantics). */
-static int constraints_check_new_row(Context* ctx, Table* table, Cell* cells) {
-    int needs_scan = 0;
-    for (int c = 0; c < table->column_count; c++) {
-        if ((table->columns[c].flags & (COL_FLAG_UNIQUE | COL_FLAG_PRIMARY_KEY)) &&
-            cells[c].type != VAL_NULL) {
-            needs_scan = 1;
-            break;
+/* Name of the index the engine creates for a PRIMARY KEY / UNIQUE column that
+   has none (see constraint_index). Two leading underscores keep it out of the
+   way of user names; it is an ordinary index otherwise. */
+#define IMPLICIT_INDEX_PREFIX "__unique_"
+
+/* The index that serves the uniqueness check on `column`: any index on the
+   column, user-made or implicit. When there is none, one is built from the
+   stored rows (once: from then on inserts and row rewrites maintain it like
+   any other index) and recorded in the catalog. Returns NULL if no index slot
+   is free; the caller then falls back to scanning. */
+static TableIndex* constraint_index(Context* ctx, Table* table, int column) {
+    const char* column_name = table->columns[column].name;
+    for (int i = 0; i < table->index_count; i++) {
+        if (strcmp(table->indexes[i].column_name, column_name) == 0) {
+            return &table->indexes[i];
         }
     }
-    if (!needs_scan) return 1;
+    if (table->index_count >= MAX_TABLE_INDEXES) return NULL;
+    char name[MAX_NAME_LEN + 1];
+    snprintf(name, sizeof(name), "%s%.*s", IMPLICIT_INDEX_PREFIX,
+             (int)(MAX_NAME_LEN - strlen(IMPLICIT_INDEX_PREFIX)), column_name);
+    /* execute_create_index can fail only for lack of memory or pages, or
+       because a user index already took the name: none of that is an error
+       here, the check just scans instead. */
+    char saved_error[sizeof(g_sql_ddl_error)];
+    memcpy(saved_error, g_sql_ddl_error, sizeof(saved_error));
+    int created = execute_create_index(ctx, name, table->name, column_name);
+    memcpy(g_sql_ddl_error, saved_error, sizeof(saved_error));
+    if (!created) return NULL;
+    return &table->indexes[table->index_count - 1];
+}
+
+typedef struct {
+    Context*    ctx;
+    Table*      table;
+    int         column;
+    Cell        value; /* a copy; a string in it stays the caller's */
+    int         key_is_exact; /* an index hit is a match, no need to re-read */
+    int         found;
+    int         failed;
+} UniqueProbe;
+
+/* btree_scan_eq visitor. A key of the probed value that the index holds in
+   full (any number, a bool, text up to BTREE_STRING_KEY_BYTES) is a match on
+   its own; a longer string is only a candidate, because keys keep just its
+   first bytes, so the row is re-read and compared in full. */
+static void unique_probe_visit(int row_page, int row_offset, void* user) {
+    UniqueProbe* probe = (UniqueProbe*)user;
+    if (probe->found || probe->failed) return;
+    if (probe->key_is_exact) {
+        probe->found = 1;
+        return;
+    }
+    if (row_offset < ROW_PAGE_HEADER_SIZE || row_offset >= PAGE_SIZE) {
+        probe->failed = 1;
+        return;
+    }
+    uint8_t page[PAGE_SIZE];
+    pager_read_page(probe->ctx->pager, row_page, page);
+    int16_t record_size;
+    memcpy(&record_size, page + row_offset, sizeof(record_size));
+    if (record_size <= 0 || row_offset + (int)record_size > PAGE_SIZE) {
+        probe->failed = 1;
+        return;
+    }
+    Row* row = deserialize_row(probe->table, page + row_offset);
+    if (row == NULL) {
+        probe->failed = 1;
+        return;
+    }
+    if (probe->column < row->field_count) {
+        Cell* existing = &row->fields[probe->column].value;
+        if (existing->type != VAL_NULL && cell_compare(existing, &probe->value) == 0) {
+            probe->found = 1;
+        }
+    }
+    free_row(row);
+    free(row);
+}
+
+/* Looks `value` up in the index. An int and a float that compare equal sit in
+   different key spaces, so a numeric value is probed in both; 0.0 and -0.0
+   compare equal but encode differently, so a float zero is probed as both. Returns 1 if
+   a stored row holds an equal value, 0 if none does, -1 if the index could
+   not be read (the caller scans instead). */
+static int unique_index_contains(Context* ctx, Table* table, TableIndex* idx,
+                                 int column, const Cell* value) {
+    Cell keys[3];
+    int key_count = 0;
+    keys[key_count++] = *value;
+    if (value->type == VAL_INT || value->type == VAL_BOOL) {
+        keys[key_count].type = VAL_FLOAT;
+        keys[key_count++].as.as_float = (double)value->as.as_int;
+    } else if (value->type == VAL_FLOAT && value->as.as_float == floor(value->as.as_float) &&
+               value->as.as_float >= -2147483648.0 && value->as.as_float < 2147483648.0) {
+        keys[key_count].type = VAL_INT;
+        keys[key_count++].as.as_int = (int)value->as.as_float;
+    }
+    if (value->type == VAL_FLOAT && value->as.as_float == 0.0) {
+        keys[key_count].type = VAL_FLOAT;
+        keys[key_count++].as.as_float = signbit(value->as.as_float) ? 0.0 : -0.0;
+    }
+    BTree* tree = btree_open(ctx->pager, idx->root_page);
+    if (tree == NULL) return -1;
+    int exact = !cell_owns_text(value->type) ||
+                strlen(value->as.as_string != NULL ? value->as.as_string : "") < BTREE_STRING_KEY_BYTES;
+    UniqueProbe probe = {ctx, table, column, *value, exact, 0, 0};
+    for (int k = 0; k < key_count && !probe.found && !probe.failed; k++) {
+        if (btree_scan_eq(tree, &keys[k], unique_probe_visit, &probe) < 0) probe.failed = 1;
+    }
+    btree_destroy(tree);
+    if (probe.failed) return -1;
+    return probe.found;
+}
+
+/* Checks UNIQUE / PRIMARY KEY for a new row against the rows already stored.
+   NULL values never conflict (SQL-standard UNIQUE semantics). Each such
+   column is looked up in its index (constraint_index); only a column that
+   cannot have one is checked by scanning every stored row. */
+static int constraints_check_new_row(Context* ctx, Table* table, Cell* cells) {
+    int scan_columns[MAX_COLUMNS];
+    int scan_count = 0;
+    for (int c = 0; c < table->column_count; c++) {
+        int flags = table->columns[c].flags;
+        if (!(flags & (COL_FLAG_UNIQUE | COL_FLAG_PRIMARY_KEY))) continue;
+        if (cells[c].type == VAL_NULL) continue;
+        TableIndex* idx = constraint_index(ctx, table, c);
+        int hit = idx != NULL ? unique_index_contains(ctx, table, idx, c, &cells[c]) : -1;
+        if (hit > 0) {
+            snprintf(g_sql_ddl_error, sizeof(g_sql_ddl_error),
+                     "%s constraint violated: %s.%s",
+                     constraint_label(flags), table->name, table->columns[c].name);
+            return 0;
+        }
+        if (hit < 0 && scan_count < MAX_COLUMNS) scan_columns[scan_count++] = c;
+    }
+    if (scan_count == 0) return 1;
 
     Row* rows = NULL;
     int row_count = 0;
     if (!read_all_rows(ctx, table, &rows, &row_count)) return 0;
     for (int r = 0; r < row_count; r++) {
-        for (int c = 0; c < table->column_count; c++) {
-            int flags = table->columns[c].flags;
-            if (!(flags & (COL_FLAG_UNIQUE | COL_FLAG_PRIMARY_KEY))) continue;
-            if (cells[c].type == VAL_NULL) continue;
+        for (int s = 0; s < scan_count; s++) {
+            int c = scan_columns[s];
             Cell* existing = &rows[r].fields[c].value;
             if (existing->type == VAL_NULL) continue;
             if (cell_compare(existing, &cells[c]) == 0) {
                 snprintf(g_sql_ddl_error, sizeof(g_sql_ddl_error),
                          "%s constraint violated: %s.%s",
-                         constraint_label(flags), table->name, table->columns[c].name);
+                         constraint_label(table->columns[c].flags),
+                         table->name, table->columns[c].name);
                 free_rows(rows, row_count);
                 return 0;
             }
