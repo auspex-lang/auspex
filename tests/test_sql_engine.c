@@ -957,6 +957,47 @@ TEST(sql_sum_result_type_follows_inputs) {
     cleanup(path);
 }
 
+/* A doubled quote inside a string literal stands for one quote, as in
+   standard SQL and on SQLite. */
+TEST(sql_string_literal_doubled_quote_escape) {
+    char* path = make_temp_path();
+    Context ctx = {path, NULL};
+
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("CREATE TABLE t (id INT, name STRING)", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO t VALUES (1, 'it''s')", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO t VALUES (2, '''quoted''')", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO t VALUES (3, '')", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO t VALUES (4, \"say \"\"hi\"\"\")", &ctx));
+
+    Result* res = sql_exec("SELECT id FROM t WHERE name = 'it''s'", &ctx);
+    ASSERT_PTR_NOT_NULL(res);
+    ASSERT_INT_EQ(1, res->row_count);
+    ASSERT_INT_EQ(1, row_get_field(&res->rows[0], "id").as.as_int);
+    result_free(res);
+
+    res = sql_exec("SELECT name FROM t WHERE id = 2", &ctx);
+    ASSERT_PTR_NOT_NULL(res);
+    ASSERT_STRING_EQ("'quoted'", row_get_field(&res->rows[0], "name").as.as_string);
+    result_free(res);
+
+    res = sql_exec("SELECT name FROM t WHERE id = 3", &ctx);
+    ASSERT_PTR_NOT_NULL(res);
+    ASSERT_STRING_EQ("", row_get_field(&res->rows[0], "name").as.as_string);
+    result_free(res);
+
+    res = sql_exec("SELECT name FROM t WHERE id = 4", &ctx);
+    ASSERT_PTR_NOT_NULL(res);
+    ASSERT_STRING_EQ("say \"hi\"", row_get_field(&res->rows[0], "name").as.as_string);
+    result_free(res);
+
+    /* Rows 1 and 2 contain a single quote. */
+    ASSERT_INT_EQ(2, select_count(&ctx, "SELECT * FROM t WHERE name LIKE '%''%'"));
+
+    catalog_close(&ctx);
+    cleanup(path);
+}
+
 TEST(sql_scan_returns_rows_from_full_middle_pages) {
     char* path = make_temp_path();
     Context ctx = {path, NULL};
@@ -2088,6 +2129,7 @@ int main(void) {
     RUN_TEST(sql_aggregate_count);
     RUN_TEST(sql_aggregate_sum_avg_min_max);
     RUN_TEST(sql_aggregate_with_where);
+    RUN_TEST(sql_string_literal_doubled_quote_escape);
     RUN_TEST(sql_sum_result_type_follows_inputs);
     RUN_TEST(sql_insert_multiple_value_rows);
     RUN_TEST(sql_insert_multiple_rows_checks_all_before_inserting);
