@@ -221,7 +221,7 @@ TEST(phase11_aggregates_skip_null) {
         "    print c;\n"
         "    int s = -1;\n"
         "    select sum(val) into s from n_t;\n"
-        "    print s;\n"
+        "    print concat(\"sum=\", int_to_string(s));\n"
         "    return 0;\n"
         "}\n",
         out, sizeof(out));
@@ -230,8 +230,8 @@ TEST(phase11_aggregates_skip_null) {
     ASSERT_INT_EQ(1, output_contains(out, "3"));
     /* COUNT(col) skips NULLs. */
     ASSERT_INT_EQ(1, output_contains(out, "2"));
-    /* SUM skips NULLs: 10 + 30 = 40. */
-    ASSERT_INT_EQ(1, output_contains(out, "40"));
+    /* SUM skips NULLs: 10 + 30 = 40, and over ints it is an int. */
+    ASSERT_INT_EQ(1, output_contains(out, "sum=40"));
 }
 
 TEST(phase11_coalesce_returns_first_non_null) {

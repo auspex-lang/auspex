@@ -398,7 +398,8 @@ TEST(sql_aggregate_sum_avg_min_max) {
     Result* res = sql_exec("SELECT SUM(score), AVG(score), MIN(score), MAX(score) FROM scores", &ctx);
     ASSERT_PTR_NOT_NULL(res);
     ASSERT_INT_EQ(1, res->row_count);
-    ASSERT_FLOAT_EQ(60.0, row_get_field(&res->rows[0], "sum").as.as_float);
+    ASSERT_INT_EQ(VAL_INT, row_get_field(&res->rows[0], "sum").type);
+    ASSERT_INT_EQ(60, row_get_field(&res->rows[0], "sum").as.as_int);
     ASSERT_FLOAT_EQ(20.0, row_get_field(&res->rows[0], "avg").as.as_float);
     ASSERT_INT_EQ(10, row_get_field(&res->rows[0], "min").as.as_int);
     ASSERT_INT_EQ(30, row_get_field(&res->rows[0], "max").as.as_int);
@@ -422,7 +423,7 @@ TEST(sql_aggregate_with_where) {
     ASSERT_PTR_NOT_NULL(res);
     ASSERT_INT_EQ(1, res->row_count);
     ASSERT_INT_EQ(2, row_get_field(&res->rows[0], "count").as.as_int);
-    ASSERT_FLOAT_EQ(50.0, row_get_field(&res->rows[0], "sum").as.as_float);
+    ASSERT_INT_EQ(50, row_get_field(&res->rows[0], "sum").as.as_int);
     result_free(res);
 
     catalog_close(&ctx);
@@ -702,10 +703,10 @@ TEST(sql_group_by_count_sum) {
     ASSERT_INT_EQ(2, res->row_count);
     ASSERT_INT_EQ(1, row_get_field(&res->rows[0], "category").as.as_int);
     ASSERT_INT_EQ(2, row_get_field(&res->rows[0], "count").as.as_int);
-    ASSERT_FLOAT_EQ(30.0, row_get_field(&res->rows[0], "sum").as.as_float);
+    ASSERT_INT_EQ(30, row_get_field(&res->rows[0], "sum").as.as_int);
     ASSERT_INT_EQ(2, row_get_field(&res->rows[1], "category").as.as_int);
     ASSERT_INT_EQ(1, row_get_field(&res->rows[1], "count").as.as_int);
-    ASSERT_FLOAT_EQ(30.0, row_get_field(&res->rows[1], "sum").as.as_float);
+    ASSERT_INT_EQ(30, row_get_field(&res->rows[1], "sum").as.as_int);
     result_free(res);
 
     catalog_close(&ctx);
@@ -880,6 +881,39 @@ static double select_single_float(Context* ctx, const char* sql, const char* fie
     return v;
 }
 
+/* SUM is an int over ints (as on SQLite), a float once any input is a
+   float, and a float when the int sum would overflow. */
+TEST(sql_sum_result_type_follows_inputs) {
+    char* path = make_temp_path();
+    Context ctx = {path, NULL};
+
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("CREATE TABLE n (i INT, f FLOAT)", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO n VALUES (2000000000, 1.5)", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO n VALUES (2000000000, 2)", &ctx));
+
+    Result* res = sql_exec("SELECT SUM(f) FROM n", &ctx);
+    ASSERT_PTR_NOT_NULL(res);
+    ASSERT_INT_EQ(VAL_FLOAT, row_get_field(&res->rows[0], "sum").type);
+    result_free(res);
+    ASSERT_FLOAT_EQ(3.5, select_single_float(&ctx, "SELECT SUM(f) FROM n", "sum"));
+
+    res = sql_exec("SELECT SUM(i) FROM n", &ctx);
+    ASSERT_PTR_NOT_NULL(res);
+    ASSERT_INT_EQ(VAL_FLOAT, row_get_field(&res->rows[0], "sum").type);
+    result_free(res);
+    ASSERT_FLOAT_EQ(4000000000.0, select_single_float(&ctx, "SELECT SUM(i) FROM n", "sum"));
+
+    res = sql_exec("SELECT SUM(i) FROM n WHERE f > 1.6", &ctx);
+    ASSERT_PTR_NOT_NULL(res);
+    ASSERT_INT_EQ(VAL_INT, row_get_field(&res->rows[0], "sum").type);
+    ASSERT_INT_EQ(2000000000, row_get_field(&res->rows[0], "sum").as.as_int);
+    result_free(res);
+
+    catalog_close(&ctx);
+    cleanup(path);
+}
+
 TEST(sql_scan_returns_rows_from_full_middle_pages) {
     char* path = make_temp_path();
     Context ctx = {path, NULL};
@@ -890,8 +924,8 @@ TEST(sql_scan_returns_rows_from_full_middle_pages) {
 
     ASSERT_INT_EQ(BIG_ROWS, select_count(&ctx, "SELECT * FROM big"));
     ASSERT_INT_EQ(BIG_ROWS, select_single_int(&ctx, "SELECT COUNT(*) FROM big", "count"));
-    ASSERT_FLOAT_EQ((double)(BIG_ROWS * (BIG_ROWS + 1) / 2),
-                    select_single_float(&ctx, "SELECT SUM(id) FROM big", "sum"));
+    ASSERT_INT_EQ(BIG_ROWS * (BIG_ROWS + 1) / 2,
+                  select_single_int(&ctx, "SELECT SUM(id) FROM big", "sum"));
     /* A row that lives on a full middle page. */
     ASSERT_INT_EQ(1, select_count(&ctx, "SELECT id FROM big WHERE id = 100"));
 
@@ -2011,6 +2045,7 @@ int main(void) {
     RUN_TEST(sql_aggregate_count);
     RUN_TEST(sql_aggregate_sum_avg_min_max);
     RUN_TEST(sql_aggregate_with_where);
+    RUN_TEST(sql_sum_result_type_follows_inputs);
     RUN_TEST(sql_join_basic);
     RUN_TEST(sql_join_select_star);
     RUN_TEST(sql_join_with_where_limit);
