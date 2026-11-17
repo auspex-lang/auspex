@@ -1,6 +1,7 @@
 #include <ctype.h>
 #include <math.h>
 #include <stdint.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -2462,21 +2463,31 @@ static Cell compute_aggregate(AggregateFunc agg, Row** rows, int row_count,
 
     if (agg == AGG_SUM || agg == AGG_AVG) {
         double sum = 0;
+        long long int_sum = 0;
         int numeric_count = 0;
+        int saw_float = 0;
         for (int i = 0; i < row_count; i++) {
             Cell* value = source_row_find_field(rows[i], arg);
             if (value == NULL || value->type == VAL_NULL) continue;
             if (value->type == VAL_INT) {
                 sum += value->as.as_int;
+                int_sum += value->as.as_int;
                 numeric_count++;
             } else if (value->type == VAL_FLOAT) {
                 sum += value->as.as_float;
+                saw_float = 1;
                 numeric_count++;
             }
         }
         if (agg == AGG_AVG && numeric_count > 0) {
             result.type = VAL_FLOAT;
             result.as.as_float = sum / numeric_count;
+        } else if (agg == AGG_SUM && !saw_float && int_sum >= INT_MIN && int_sum <= INT_MAX) {
+            /* SUM over ints is an int, as on SQLite, so it can be selected
+               into an int variable. A sum past the int range falls back to
+               float rather than wrapping. */
+            result.type = VAL_INT;
+            result.as.as_int = (int)int_sum;
         } else {
             result.type = VAL_FLOAT;
             result.as.as_float = sum;
