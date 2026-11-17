@@ -183,6 +183,15 @@ int os_ftruncate(int fd, off_t length) {
     return ftruncate(fd, length);
 }
 
+int os_fsync(int fd) {
+    if (fd < 0) return -1;
+#ifdef _WIN32
+    return _commit(fd) == 0 ? 0 : -1;
+#else
+    return fsync(fd) == 0 ? 0 : -1;
+#endif
+}
+
 long os_getline(char** line, size_t* capacity, FILE* f) {
 #ifdef _WIN32
     if (*line == NULL || *capacity == 0) {
