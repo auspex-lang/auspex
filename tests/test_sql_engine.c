@@ -1831,6 +1831,129 @@ TEST(sql_catalog_rejects_a_table_record_past_the_page) {
     cleanup(path);
 }
 
+/* ---- UPDATE / DELETE in place (#107) ------------------------------------ */
+
+static int rows_where(Context* ctx, const char* fmt, int arg) {
+    char sql[160];
+    snprintf(sql, sizeof(sql), fmt, arg);
+    Result* res = sql_exec(sql, ctx);
+    int n = res != NULL ? res->row_count : -1;
+    result_free(res);
+    return n;
+}
+
+/* 600 rows over several pages, indexed on every column. */
+static void make_indexed_table(Context* ctx) {
+    sql_exec_ddl("CREATE TABLE t (id INT, v INT, s STRING)", ctx);
+    for (int i = 0; i < 600; i++) {
+        char sql[128];
+        snprintf(sql, sizeof(sql), "INSERT INTO t VALUES (%d, %d, 'name-%05d')", i, i % 10, i);
+        sql_exec_ddl(sql, ctx);
+    }
+    sql_exec_ddl("CREATE INDEX t_id ON t (id)", ctx);
+    sql_exec_ddl("CREATE INDEX t_v ON t (v)", ctx);
+    sql_exec_ddl("CREATE INDEX t_s ON t (s)", ctx);
+}
+
+TEST(sql_update_in_place_keeps_indexes_in_step) {
+    char* path = make_temp_path();
+    Context ctx = {path, NULL};
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    make_indexed_table(&ctx);
+
+    /* Same-size value on an indexed column. */
+    ASSERT_INT_EQ(1, sql_exec_ddl("UPDATE t SET v = 77 WHERE id = 523", &ctx));
+    ASSERT_INT_EQ(1, rows_where(&ctx, "SELECT id FROM t WHERE v = %d", 77));
+    ASSERT_INT_EQ(59, rows_where(&ctx, "SELECT id FROM t WHERE v = %d", 3));
+    ASSERT_INT_EQ(1, rows_where(&ctx, "SELECT id FROM t WHERE id = %d AND v = 77", 523));
+
+    /* A shorter string stays in the old record; a longer one takes the
+       general path. Both stay reachable through the index. */
+    ASSERT_INT_EQ(1, sql_exec_ddl("UPDATE t SET s = 'x' WHERE id = 200", &ctx));
+    ASSERT_INT_EQ(1, count_rows(&ctx, "SELECT id FROM t WHERE s = 'x'"));
+    ASSERT_INT_EQ(0, count_rows(&ctx, "SELECT id FROM t WHERE s = 'name-00200'"));
+    ASSERT_INT_EQ(1, sql_exec_ddl(
+        "UPDATE t SET s = 'a-much-longer-name-than-before' WHERE id = 201", &ctx));
+    ASSERT_INT_EQ(1, count_rows(&ctx, "SELECT id FROM t WHERE s = 'a-much-longer-name-than-before'"));
+    ASSERT_INT_EQ(1, count_rows(&ctx, "SELECT id FROM t WHERE s = 'x'"));
+
+    /* Many rows at once, matched by a full scan (no index on the term). */
+    ASSERT_INT_EQ(1, sql_exec_ddl("UPDATE t SET v = 50 WHERE s LIKE 'name-001%'", &ctx));
+    ASSERT_INT_EQ(100, rows_where(&ctx, "SELECT id FROM t WHERE v = %d", 50));
+
+    /* No match writes nothing and succeeds. */
+    ASSERT_INT_EQ(1, sql_exec_ddl("UPDATE t SET v = 1 WHERE id = 99999", &ctx));
+    catalog_close(&ctx);
+
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    ASSERT_INT_EQ(600, count_rows(&ctx, "SELECT id FROM t"));
+    ASSERT_INT_EQ(1, rows_where(&ctx, "SELECT id FROM t WHERE v = %d", 77));
+    ASSERT_INT_EQ(1, count_rows(&ctx, "SELECT id FROM t WHERE s = 'x'"));
+    ASSERT_INT_EQ(100, rows_where(&ctx, "SELECT id FROM t WHERE v = %d", 50));
+    for (int i = 0; i < 600; i++) {
+        ASSERT_INT_EQ(1, rows_where(&ctx, "SELECT id FROM t WHERE id = %d", i));
+    }
+    catalog_close(&ctx);
+    cleanup(path);
+}
+
+TEST(sql_update_in_place_enforces_not_null) {
+    char* path = make_temp_path();
+    Context ctx = {path, NULL};
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("CREATE TABLE n (id INT, v INT NOT NULL)", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO n VALUES (1, 10)", &ctx));
+    ASSERT_INT_EQ(0, sql_exec_ddl("UPDATE n SET v = NULL WHERE id = 1", &ctx));
+    ASSERT_INT_EQ(1, count_rows(&ctx, "SELECT id FROM n WHERE v = 10"));
+    /* No row matches, so nothing violates the constraint. */
+    ASSERT_INT_EQ(1, sql_exec_ddl("UPDATE n SET v = NULL WHERE id = 2", &ctx));
+    catalog_close(&ctx);
+    cleanup(path);
+}
+
+TEST(sql_delete_in_place_moves_index_entries_of_shifted_rows) {
+    char* path = make_temp_path();
+    Context ctx = {path, NULL};
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    make_indexed_table(&ctx);
+
+    /* One row from the middle of a page: the rows after it on that page
+       move, and must still be found through every index. */
+    ASSERT_INT_EQ(1, sql_exec_ddl("DELETE FROM t WHERE id = 100", &ctx));
+    ASSERT_INT_EQ(599, count_rows(&ctx, "SELECT id FROM t"));
+    ASSERT_INT_EQ(0, rows_where(&ctx, "SELECT id FROM t WHERE id = %d", 100));
+    for (int i = 101; i < 140; i++) {
+        ASSERT_INT_EQ(1, rows_where(&ctx, "SELECT id FROM t WHERE id = %d", i));
+    }
+    ASSERT_INT_EQ(59, rows_where(&ctx, "SELECT id FROM t WHERE v = %d", 0));
+    ASSERT_INT_EQ(1, count_rows(&ctx, "SELECT id FROM t WHERE s = 'name-00101'"));
+
+    /* Rows spread over every page, matched through the v index. */
+    ASSERT_INT_EQ(1, sql_exec_ddl("DELETE FROM t WHERE v = 3", &ctx));
+    ASSERT_INT_EQ(539, count_rows(&ctx, "SELECT id FROM t"));
+    catalog_close(&ctx);
+
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    for (int i = 0; i < 600; i++) {
+        int expected = (i == 100 || i % 10 == 3) ? 0 : 1;
+        ASSERT_INT_EQ(expected, rows_where(&ctx, "SELECT id FROM t WHERE id = %d", i));
+    }
+    for (int v = 0; v < 10; v++) {
+        int expected = v == 3 ? 0 : (v == 0 ? 59 : 60);
+        ASSERT_INT_EQ(expected, rows_where(&ctx, "SELECT id FROM t WHERE v = %d", v));
+    }
+    /* New rows still append after the compacted pages. */
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO t VALUES (1000, 3, 'new')", &ctx));
+    ASSERT_INT_EQ(1, rows_where(&ctx, "SELECT id FROM t WHERE v = %d", 3));
+    /* Everything, then the table is empty but usable. */
+    ASSERT_INT_EQ(1, sql_exec_ddl("DELETE FROM t", &ctx));
+    ASSERT_INT_EQ(0, count_rows(&ctx, "SELECT id FROM t"));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO t VALUES (1, 1, 'again')", &ctx));
+    ASSERT_INT_EQ(1, rows_where(&ctx, "SELECT id FROM t WHERE id = %d", 1));
+    catalog_close(&ctx);
+    cleanup(path);
+}
+
 int main(void) {
     RUN_TEST(sql_scan_returns_rows_from_full_middle_pages);
     RUN_TEST(sql_index_build_sees_rows_on_full_middle_pages);
@@ -1895,5 +2018,8 @@ int main(void) {
     RUN_TEST(sql_catalog_full_reports_the_reason);
     RUN_TEST(sql_catalog_full_rolls_back_defaults_indexes_and_columns);
     RUN_TEST(sql_catalog_rejects_a_table_record_past_the_page);
+    RUN_TEST(sql_update_in_place_keeps_indexes_in_step);
+    RUN_TEST(sql_update_in_place_enforces_not_null);
+    RUN_TEST(sql_delete_in_place_moves_index_entries_of_shifted_rows);
     TEST_SUMMARY();
 }

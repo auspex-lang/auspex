@@ -2552,10 +2552,17 @@ static void result_append_aggregate(Result* res, SelectStmt* stmt,
 /* of the matches. Anything else falls back to a full scan.                   */
 /* -------------------------------------------------------------------------- */
 
+/* Where a stored row lives: its row page and the record's offset in it. */
+typedef struct {
+    int page;
+    int offset;
+} RowLoc;
+
 typedef struct {
     Context* ctx;
     Table*   table;
     Row*     rows;
+    RowLoc*  locs; /* parallel to rows */
     int      count;
     int      capacity;
     int      failed;
@@ -2584,15 +2591,20 @@ static void index_scan_collect(int row_page, int row_offset, void* user) {
     if (scan->count >= scan->capacity) {
         int new_capacity = scan->capacity == 0 ? 8 : scan->capacity * 2;
         Row* new_rows = realloc(scan->rows, (size_t)new_capacity * sizeof(Row));
-        if (new_rows == NULL) {
+        if (new_rows != NULL) scan->rows = new_rows;
+        RowLoc* new_locs = new_rows != NULL
+            ? realloc(scan->locs, (size_t)new_capacity * sizeof(RowLoc)) : NULL;
+        if (new_locs == NULL) {
             free_row(row);
             free(row);
             scan->failed = 1;
             return;
         }
-        scan->rows = new_rows;
+        scan->locs = new_locs;
         scan->capacity = new_capacity;
     }
+    scan->locs[scan->count].page = row_page;
+    scan->locs[scan->count].offset = row_offset;
     scan->rows[scan->count++] = *row;
     free(row);
 }
@@ -2754,7 +2766,7 @@ static int index_scan_string(BTree* tree, WhereNode* node, IndexScanCtx* scan) {
 /* Returns 1 when an index produced the candidate rows, 0 to fall back to a
    full scan. */
 static int try_index_lookup(Context* ctx, Table* table, WhereNode* where,
-                            Row** out_rows, int* out_count) {
+                            Row** out_rows, int* out_count, RowLoc** out_locs) {
     if (where == NULL || table->index_count == 0) return 0;
 
     WhereNode* terms[MAX_INDEX_CONJUNCTS];
@@ -2788,6 +2800,7 @@ static int try_index_lookup(Context* ctx, Table* table, WhereNode* where,
 
             if (!ok || scan.failed) {
                 free_rows(scan.rows, scan.count);
+                free(scan.locs);
                 return 0; /* corrupt index: full scan is still correct */
             }
             if (getenv("AUSPEX_INDEX_DEBUG") != NULL || getenv("MYPL_INDEX_DEBUG") != NULL) {
@@ -2796,6 +2809,11 @@ static int try_index_lookup(Context* ctx, Table* table, WhereNode* where,
             }
             *out_rows = scan.rows;
             *out_count = scan.count;
+            if (out_locs != NULL) {
+                *out_locs = scan.locs;
+            } else {
+                free(scan.locs);
+            }
             return 1;
         }
     }
@@ -3009,7 +3027,7 @@ static Result* execute_select(Context* ctx, SelectStmt* stmt) {
     } else {
         Table* table = catalog_find_table(ctx, stmt->table_name);
         if (table != NULL) {
-            if (!try_index_lookup(ctx, table, stmt->where, &source_rows, &source_count) &&
+            if (!try_index_lookup(ctx, table, stmt->where, &source_rows, &source_count, NULL) &&
                 !read_all_rows(ctx, table, &source_rows, &source_count)) {
                 return result_create(0);
             }
@@ -3942,6 +3960,360 @@ static void free_row_pages(Context* ctx, Table* table) {
     table->last_row_page = 0;
 }
 
+/* ---- UPDATE / DELETE without rewriting the table (#107) -------------------
+   The general path below reads every row, rewrites the whole row chain and
+   rebuilds every index. When no row-level trigger can observe or change the
+   table mid-statement, the fast paths here touch only the matching rows: an
+   UPDATE overwrites each record in place, a DELETE compacts only the pages
+   that held deleted rows, and only the index entries that changed are
+   updated. */
+
+static int index_build_from_rows(Context* ctx, Table* table, int column, BTree* tree);
+
+/* Rows of `table` matching `where` (every row when it is NULL), each with its
+   locator. Candidates come from an index when one serves a WHERE term, else
+   from a scan that keeps only the matches. Returns 0 if the table cannot be
+   read. */
+static int find_matching_rows(Context* ctx, Table* table, WhereNode* where,
+                              Row** out_rows, RowLoc** out_locs, int* out_count) {
+    Row* rows = NULL;
+    RowLoc* locs = NULL;
+    int count = 0;
+    if (try_index_lookup(ctx, table, where, &rows, &count, &locs)) {
+        int kept = 0;
+        for (int i = 0; i < count; i++) {
+            if (row_matches_where(&rows[i], where)) {
+                rows[kept] = rows[i];
+                locs[kept] = locs[i];
+                kept++;
+            } else {
+                free_row(&rows[i]);
+            }
+        }
+        *out_rows = rows;
+        *out_locs = locs;
+        *out_count = kept;
+        return 1;
+    }
+
+    int capacity = 0;
+    int page_num = table->first_row_page;
+    while (page_num != 0) {
+        uint8_t page[PAGE_SIZE];
+        pager_read_page(ctx->pager, page_num, page);
+        int data_end = row_page_data_end(page);
+        int offset = ROW_PAGE_HEADER_SIZE;
+        while (offset < data_end) {
+            int16_t record_size;
+            memcpy(&record_size, page + offset, sizeof(record_size));
+            Row* row = (record_size > 0 && offset + (int)record_size <= data_end)
+                ? deserialize_row(table, page + offset)
+                : NULL;
+            if (row == NULL) goto fail;
+            if (where != NULL && !row_matches_where(row, where)) {
+                free_row(row);
+                free(row);
+            } else {
+                if (count >= capacity) {
+                    int new_capacity = capacity == 0 ? 8 : capacity * 2;
+                    Row* new_rows = realloc(rows, (size_t)new_capacity * sizeof(Row));
+                    if (new_rows != NULL) rows = new_rows;
+                    RowLoc* new_locs = new_rows != NULL
+                        ? realloc(locs, (size_t)new_capacity * sizeof(RowLoc)) : NULL;
+                    if (new_locs == NULL) {
+                        free_row(row);
+                        free(row);
+                        goto fail;
+                    }
+                    locs = new_locs;
+                    capacity = new_capacity;
+                }
+                rows[count] = *row;
+                locs[count].page = page_num;
+                locs[count].offset = offset;
+                count++;
+                free(row);
+            }
+            offset += (int)record_size;
+        }
+        page_num = row_page_next(ctx->pager, page);
+    }
+    *out_rows = rows;
+    *out_locs = locs;
+    *out_count = count;
+    return 1;
+
+fail:
+    free_rows(rows, count);
+    free(locs);
+    return 0;
+}
+
+/* Empties one index and fills it again from the stored rows. Used when an
+   incremental change finds the index out of step with the table. */
+static void index_rebuild(Context* ctx, Table* table, TableIndex* idx) {
+    int column = table_column_index(table, idx->column_name);
+    BTree* old = btree_open(ctx->pager, idx->root_page);
+    if (old != NULL) {
+        btree_free_pages(old);
+        btree_destroy(old);
+    }
+    BTree* fresh = btree_create(ctx->pager);
+    if (fresh == NULL) {
+        idx->root_page = 0;
+        return;
+    }
+    if (column >= 0) index_build_from_rows(ctx, table, column, fresh);
+    idx->root_page = btree_root_page(fresh);
+    btree_destroy(fresh);
+}
+
+/* Moves the entry for `key` in `idx` from one row locator to another (or
+   only removes it when `to` is NULL, or only adds it when `from` is NULL).
+   Returns 0 when the old entry was missing, i.e. the index needs a rebuild. */
+static int index_move_entry(Context* ctx, TableIndex* idx, const Cell* old_key,
+                            const Cell* new_key, const RowLoc* from, const RowLoc* to) {
+    BTree* tree = btree_open(ctx->pager, idx->root_page);
+    if (tree == NULL) return 0;
+    int ok = 1;
+    if (from != NULL && !btree_delete(tree, old_key, from->page, from->offset)) ok = 0;
+    if (to != NULL) btree_insert(tree, new_key, to->page, to->offset);
+    idx->root_page = btree_root_page(tree);
+    btree_destroy(tree);
+    return ok;
+}
+
+/* Returns 1 or 0 for a completed or failed UPDATE, or -1 when the general
+   path has to run instead: a row trigger is active, the column is a key
+   (uniqueness is checked over the whole row set there), or a new value does
+   not fit its record. Nothing is written before that decision. */
+static int update_in_place(Context* ctx, Table* table, UpdateStmt* stmt, int col) {
+    if (g_row_trigger_fn != NULL) return -1;
+    int flags = table->columns[col].flags;
+    if (flags & (COL_FLAG_UNIQUE | COL_FLAG_PRIMARY_KEY)) return -1;
+    if (table->column_count > MAX_COLUMNS) return -1;
+
+    Row* rows = NULL;
+    RowLoc* locs = NULL;
+    int count = 0;
+    if (!find_matching_rows(ctx, table, stmt->where, &rows, &locs, &count)) return -1;
+    if (count == 0) {
+        free(locs);
+        free_rows(rows, count);
+        return 1;
+    }
+    const Cell* value = &stmt->set_value;
+    if (value->type == VAL_NULL && (flags & COL_FLAG_NOT_NULL)) {
+        snprintf(g_sql_ddl_error, sizeof(g_sql_ddl_error),
+                 "%s constraint violated: %s.%s",
+                 constraint_label(flags), table->name, table->columns[col].name);
+        free(locs);
+        free_rows(rows, count);
+        return 0;
+    }
+
+    /* Every new record must fit where the old one is. */
+    Cell cells[MAX_COLUMNS];
+    uint8_t page[PAGE_SIZE];
+    for (int i = 0; i < count; i++) {
+        for (int j = 0; j < table->column_count; j++) cells[j] = rows[i].fields[j].value;
+        cells[col] = *value;
+        pager_read_page(ctx->pager, locs[i].page, page);
+        int16_t old_size;
+        memcpy(&old_size, page + locs[i].offset, sizeof(old_size));
+        if (row_record_size(table, cells) > (int)old_size) {
+            free(locs);
+            free_rows(rows, count);
+            return -1;
+        }
+    }
+
+    int rebuild[MAX_TABLE_INDEXES] = {0};
+    for (int i = 0; i < count; i++) {
+        for (int j = 0; j < table->column_count; j++) cells[j] = rows[i].fields[j].value;
+        cells[col] = *value;
+        int new_size = row_record_size(table, cells);
+        uint8_t* record = malloc((size_t)new_size);
+        if (record == NULL) {
+            snprintf(g_sql_ddl_error, sizeof(g_sql_ddl_error), "out of memory");
+            free(locs);
+            free_rows(rows, count);
+            return 0;
+        }
+        serialize_row(table, cells, record);
+        pager_read_page(ctx->pager, locs[i].page, page);
+        int16_t old_size;
+        memcpy(&old_size, page + locs[i].offset, sizeof(old_size));
+        memcpy(page + locs[i].offset, record, (size_t)new_size);
+        /* A shorter record keeps its old length: readers step over records by
+           that length and decode only the columns, so the tail is padding. */
+        memcpy(page + locs[i].offset, &old_size, sizeof(old_size));
+        pager_write_page(ctx->pager, locs[i].page, page);
+        free(record);
+
+        Cell* old_value = &rows[i].fields[col].value;
+        if (old_value->type == value->type && cell_compare(old_value, (Cell*)value) == 0) {
+            continue; /* same key, same locator */
+        }
+        for (int x = 0; x < table->index_count; x++) {
+            if (rebuild[x] || strcmp(table->indexes[x].column_name, table->columns[col].name) != 0) {
+                continue;
+            }
+            if (!index_move_entry(ctx, &table->indexes[x], old_value, value,
+                                  &locs[i], &locs[i])) {
+                rebuild[x] = 1;
+            }
+        }
+    }
+    for (int x = 0; x < table->index_count; x++) {
+        if (rebuild[x]) index_rebuild(ctx, table, &table->indexes[x]);
+    }
+
+    free(locs);
+    free_rows(rows, count);
+    catalog_write_page(ctx); /* index root pages may have moved */
+    return 1;
+}
+
+typedef struct {
+    int page;
+    int offset;
+    int row; /* index into the matched rows */
+} DeleteTarget;
+
+static int delete_target_compare(const void* a, const void* b) {
+    const DeleteTarget* x = (const DeleteTarget*)a;
+    const DeleteTarget* y = (const DeleteTarget*)b;
+    if (x->page != y->page) return x->page < y->page ? -1 : 1;
+    if (x->offset != y->offset) return x->offset < y->offset ? -1 : 1;
+    return 0;
+}
+
+/* Returns 1 or 0 for a completed or failed DELETE, or -1 when the general
+   path has to run instead (a row trigger is active, or the table could not
+   be read). Each page that held a deleted row is compacted; the rows that
+   move on it get their index entries moved along. */
+static int delete_in_place(Context* ctx, Table* table, DeleteStmt* stmt) {
+    if (g_row_trigger_fn != NULL) return -1;
+
+    Row* rows = NULL;
+    RowLoc* locs = NULL;
+    int count = 0;
+    if (!find_matching_rows(ctx, table, stmt->where, &rows, &locs, &count)) return -1;
+    if (count == 0) {
+        free(locs);
+        free_rows(rows, count);
+        return 1;
+    }
+    DeleteTarget* targets = malloc((size_t)count * sizeof(DeleteTarget));
+    if (targets == NULL) {
+        snprintf(g_sql_ddl_error, sizeof(g_sql_ddl_error), "out of memory");
+        free(locs);
+        free_rows(rows, count);
+        return 0;
+    }
+    for (int i = 0; i < count; i++) {
+        targets[i].page = locs[i].page;
+        targets[i].offset = locs[i].offset;
+        targets[i].row = i;
+    }
+    qsort(targets, (size_t)count, sizeof(DeleteTarget), delete_target_compare);
+
+    int index_columns[MAX_TABLE_INDEXES];
+    for (int x = 0; x < table->index_count && x < MAX_TABLE_INDEXES; x++) {
+        index_columns[x] = table_column_index(table, table->indexes[x].column_name);
+    }
+    int rebuild[MAX_TABLE_INDEXES] = {0};
+    int ok = 1;
+
+    for (int t = 0; t < count && ok;) {
+        int page_num = targets[t].page;
+        int end = t;
+        while (end < count && targets[end].page == page_num) end++;
+
+        uint8_t page[PAGE_SIZE];
+        uint8_t compacted[PAGE_SIZE];
+        pager_read_page(ctx->pager, page_num, page);
+        memset(compacted, 0, PAGE_SIZE);
+        memcpy(compacted, page, ROW_PAGE_HEADER_SIZE); /* next-page link */
+        int data_end = row_page_data_end(page);
+        int offset = ROW_PAGE_HEADER_SIZE;
+        int write_at = ROW_PAGE_HEADER_SIZE;
+        int next_target = t;
+        while (offset < data_end) {
+            int16_t record_size;
+            memcpy(&record_size, page + offset, sizeof(record_size));
+            if (record_size <= 0 || offset + (int)record_size > data_end) {
+                ok = 0;
+                break;
+            }
+            if (next_target < end && targets[next_target].offset == offset) {
+                /* A deleted row: drop its index entries. */
+                Row* row = &rows[targets[next_target].row];
+                RowLoc from = {page_num, offset};
+                for (int x = 0; x < table->index_count && x < MAX_TABLE_INDEXES; x++) {
+                    int c = index_columns[x];
+                    if (rebuild[x] || c < 0 || c >= row->field_count) continue;
+                    if (!index_move_entry(ctx, &table->indexes[x], &row->fields[c].value,
+                                          NULL, &from, NULL)) {
+                        rebuild[x] = 1;
+                    }
+                }
+                next_target++;
+            } else {
+                if (write_at != offset) {
+                    /* A surviving row moves down: so do its index entries. */
+                    Row* row = deserialize_row(table, page + offset);
+                    if (row == NULL) {
+                        ok = 0;
+                        break;
+                    }
+                    RowLoc from = {page_num, offset};
+                    RowLoc to = {page_num, write_at};
+                    for (int x = 0; x < table->index_count && x < MAX_TABLE_INDEXES; x++) {
+                        int c = index_columns[x];
+                        if (rebuild[x] || c < 0 || c >= row->field_count) continue;
+                        if (!index_move_entry(ctx, &table->indexes[x], &row->fields[c].value,
+                                              &row->fields[c].value, &from, &to)) {
+                            rebuild[x] = 1;
+                        }
+                    }
+                    free_row(row);
+                    free(row);
+                }
+                memcpy(compacted + write_at, page + offset, (size_t)record_size);
+                write_at += record_size;
+            }
+            offset += record_size;
+        }
+        if (!ok) break;
+        if (next_target != end) {
+            /* A locator did not name a record start: the page is not what the
+               scan saw. */
+            ok = 0;
+            break;
+        }
+        int32_t free_ptr = write_at;
+        memcpy(compacted + 4, &free_ptr, sizeof(free_ptr));
+        pager_write_page(ctx->pager, page_num, compacted);
+        t = end;
+    }
+
+    for (int x = 0; x < table->index_count && x < MAX_TABLE_INDEXES; x++) {
+        if (rebuild[x]) index_rebuild(ctx, table, &table->indexes[x]);
+    }
+    free(targets);
+    free(locs);
+    free_rows(rows, count);
+    catalog_write_page(ctx);
+    if (!ok) {
+        snprintf(g_sql_ddl_error, sizeof(g_sql_ddl_error),
+                 "corrupt row page in table '%.200s'", table->name);
+        return 0;
+    }
+    return 1;
+}
+
 static int execute_update(Context* ctx, UpdateStmt* stmt) {
     Table* table = catalog_find_table(ctx, stmt->table_name);
     if (table == NULL) {
@@ -3951,10 +4323,6 @@ static int execute_update(Context* ctx, UpdateStmt* stmt) {
         }
         return 0;
     }
-
-    Row* rows = NULL;
-    int row_count = 0;
-    if (!read_all_rows(ctx, table, &rows, &row_count)) return 0;
 
     int set_col_index = -1;
     for (int i = 0; i < table->column_count; i++) {
@@ -3973,19 +4341,14 @@ static int execute_update(Context* ctx, UpdateStmt* stmt) {
                      : "a timestamp written as 'YYYY-MM-DD HH:MM:SS'");
         set_col_index = -1;
     }
-    if (set_col_index < 0) {
-        for (int i = 0; i < row_count; i++) {
-            for (int j = 0; j < rows[i].field_count; j++) {
-                free(rows[i].fields[j].name);
-                if (cell_owns_text(rows[i].fields[j].value.type)) {
-                    free(rows[i].fields[j].value.as.as_string);
-                }
-            }
-            free(rows[i].fields);
-        }
-        free(rows);
-        return 0;
-    }
+    if (set_col_index < 0) return 0;
+
+    int done = update_in_place(ctx, table, stmt, set_col_index);
+    if (done >= 0) return done;
+
+    Row* rows = NULL;
+    int row_count = 0;
+    if (!read_all_rows(ctx, table, &rows, &row_count)) return 0;
 
     /* When row-level triggers are active, snapshot the pre-update image of
        every matched row so BEFORE/AFTER row triggers receive :old. */
@@ -4003,10 +4366,12 @@ static int execute_update(Context* ctx, UpdateStmt* stmt) {
         }
     }
 
+    int matched_count = 0;
     for (int i = 0; i < row_count; i++) {
         if (stmt->where != NULL && !row_matches_where(&rows[i], stmt->where)) {
             continue;
         }
+        matched_count++;
         if (matched != NULL) {
             matched[i] = 1;
             old_rows[i] = trigger_row_dup(&rows[i]);
@@ -4042,6 +4407,14 @@ static int execute_update(Context* ctx, UpdateStmt* stmt) {
                 return 0;
             }
         }
+    }
+
+    if (matched_count == 0) {
+        /* Nothing to write: skip the rewrite and the index rebuild. */
+        free(matched);
+        free(old_rows);
+        free_rows(rows, row_count);
+        return 1;
     }
 
     /* Validate the mutated row set before the row chain is rewritten, so a
@@ -4135,6 +4508,9 @@ static int execute_delete(Context* ctx, DeleteStmt* stmt) {
         }
         return 0;
     }
+
+    int done = delete_in_place(ctx, table, stmt);
+    if (done >= 0) return done;
 
     Row* rows = NULL;
     int row_count = 0;
