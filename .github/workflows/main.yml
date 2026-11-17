@@ -60,3 +60,18 @@ jobs:
 
     - name: Run tests
       run: make test
+
+  # The standalone build (custom engine only, no SQLite). Tests that need
+  # SQLite are compiled out with USE_SQLITE; everything else must pass.
+  standalone:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Build project
+      run: make clean && make all USE_SQLITE=0 CFLAGS="-O2 -Wall -Wextra -Werror -std=c99 -D_GNU_SOURCE -Iinclude"
+
+    - name: Run tests
+      run: make test USE_SQLITE=0 CFLAGS="-O2 -Wall -Wextra -Werror -std=c99 -D_GNU_SOURCE -Iinclude"

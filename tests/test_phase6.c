@@ -97,6 +97,10 @@ TEST(phase6_array_extend_and_trim) {
     ASSERT_INT_EQ(1, strstr(out, "20") != NULL);
 }
 
+/* The next four need SQLite (--db :memory:), so they only build with
+   USE_SQLITE. FORALL on the custom engine is covered by the
+   phase6_custom_engine_* tests below. */
+#ifdef USE_SQLITE
 TEST(phase6_bulk_collect_into_array_row) {
     char out[512];
     int rc = run_auspex(
@@ -180,6 +184,8 @@ TEST(phase6_forall_delete_with_scalar_array) {
     ASSERT_INT_EQ(0, rc);
     ASSERT_INT_EQ(1, strstr(out, "6") != NULL);
 }
+
+#endif /* USE_SQLITE */
 
 /* Static SQL with ?var placeholders on the custom engine (no --db). */
 TEST(phase6_custom_engine_binds_static_sql) {
@@ -286,10 +292,12 @@ int main(void) {
     RUN_TEST(phase6_map_string_key_methods);
     RUN_TEST(phase6_map_int_key_methods);
     RUN_TEST(phase6_array_extend_and_trim);
+#ifdef USE_SQLITE
     RUN_TEST(phase6_bulk_collect_into_array_row);
     RUN_TEST(phase6_forall_insert_with_scalar_array);
     RUN_TEST(phase6_forall_update_with_scalar_array);
     RUN_TEST(phase6_forall_delete_with_scalar_array);
+#endif
     RUN_TEST(phase6_custom_engine_binds_static_sql);
     RUN_TEST(phase6_custom_engine_forall_binds_scalar_array);
     RUN_TEST(phase6_reading_string_values_from_maps_exits_cleanly);
