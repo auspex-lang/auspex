@@ -1,0 +1,108 @@
+name: Benchmarks
+
+# Times bench/ on the PR (the merge commit actions/checkout gives us) and on
+# the base it merges into, and posts one before/after comment on the PR,
+# updated on later pushes (#114). Informational only: it never fails the build.
+# Changes that only touch docs, branding or repo metadata skip it, as in the
+# other workflows.
+on:
+  pull_request:
+    branches: [ main, develop ]
+    paths-ignore:
+      - 'docs/**'
+      - 'assets/**'
+      - '.gitignore'
+      - 'LICENSE'
+      - 'CONTRIBUTING.md'
+      - 'SECURITY.md'
+      - 'CODE_OF_CONDUCT.md'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/PULL_REQUEST_TEMPLATE.md'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: bench-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    env:
+      RUNS: 5
+      BENCH_KEEP_GOING: 1
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 2  # the merge commit and its first parent, the base
+
+    - name: Install dependencies
+      run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev valgrind
+
+    - name: Build head and base
+      run: |
+        make clean && make all
+        cp bin/auspex "$RUNNER_TEMP/auspex-head"
+        # The merge commit's first parent is exactly the base it was made
+        # against, even if the base branch has moved on since.
+        git worktree add "$RUNNER_TEMP/base-src" HEAD^1
+        make -C "$RUNNER_TEMP/base-src" all
+        cp "$RUNNER_TEMP/base-src/bin/auspex" "$RUNNER_TEMP/auspex-base"
+        echo "BASE_SHA=$(git rev-parse --short HEAD^1)" >> "$GITHUB_ENV"
+        echo "HEAD_SHA=$(git rev-parse --short ${{ github.event.pull_request.head.sha }})" >> "$GITHUB_ENV"
+
+    # Both binaries run the PR's workloads, so a new or changed workload is
+    # timed on both sides; one the base cannot run shows up as "fail".
+    - name: Time workloads
+      run: |
+        bench/run.sh "$RUNNER_TEMP/auspex-base" > "$RUNNER_TEMP/base.txt"
+        bench/run.sh "$RUNNER_TEMP/auspex-head" > "$RUNNER_TEMP/head.txt"
+        cat "$RUNNER_TEMP/base.txt" "$RUNNER_TEMP/head.txt"
+
+    - name: Count vm_loop instructions
+      run: |
+        count() {
+          dir=$(mktemp -d)
+          (cd "$dir" && valgrind --tool=cachegrind --cache-sim=no \
+              --cachegrind-out-file=/dev/null "$1" "$GITHUB_WORKSPACE/bench/vm_loop.apx" \
+              >/dev/null 2>valgrind.log) || true
+          awk '/I *refs:/ { gsub(",", "", $NF); print $NF }' "$dir/valgrind.log"
+          rm -rf "$dir"
+        }
+        echo "BASE_IR=$(count "$RUNNER_TEMP/auspex-base")" >> "$GITHUB_ENV"
+        echo "HEAD_IR=$(count "$RUNNER_TEMP/auspex-head")" >> "$GITHUB_ENV"
+
+    - name: Build report
+      run: |
+        {
+          echo "<!-- auspex-bench -->"
+          echo "### Benchmarks: \`$BASE_SHA\` (base) → \`$HEAD_SHA\` (this PR)"
+          echo
+          if [ -n "$BASE_IR" ] && [ -n "$HEAD_IR" ]; then
+            bench/compare.sh "$RUNNER_TEMP/base.txt" "$RUNNER_TEMP/head.txt" "$BASE_IR" "$HEAD_IR"
+          else
+            bench/compare.sh "$RUNNER_TEMP/base.txt" "$RUNNER_TEMP/head.txt"
+          fi
+        } > "$RUNNER_TEMP/bench.md"
+        cat "$RUNNER_TEMP/bench.md" >> "$GITHUB_STEP_SUMMARY"
+
+    # Fork PRs get a read-only token, so this step may fail there; the
+    # report is still in the job summary.
+    - name: Post or update the PR comment
+      continue-on-error: true
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PR: ${{ github.event.pull_request.number }}
+      run: |
+        id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
+              -q '.[] | select(.user.login == "github-actions[bot]")
+                      | select(.body | startswith("<!-- auspex-bench -->")) | .id' | head -n 1)
+        if [ -n "$id" ]; then
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F "body=@$RUNNER_TEMP/bench.md" >/dev/null
+        else
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/bench.md"
+        fi

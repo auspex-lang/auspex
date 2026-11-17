@@ -5,10 +5,13 @@
 # is `// needs: setup.apx` gets that fixture loaded first, untimed.
 #
 #   bench/run.sh [binary]          default binary: bin/auspex
-#   RUNS=5 BENCH_DIR=dir bench/run.sh
+#   RUNS=5 BENCH_DIR=dir BENCH_KEEP_GOING=1 bench/run.sh
 #
 # BENCH_DIR is where the databases live (default: a fresh directory under the
 # system temp dir). Put it on a real disk to see fsync costs; tmpfs hides them.
+# BENCH_KEEP_GOING=1 reports a failing workload as "fail" and carries on
+# instead of stopping (CI runs the PR's workloads against the base build,
+# which may not understand a new one).
 set -eu
 
 BIN=$(cd "$(dirname "${1:-bin/auspex}")" && pwd)/$(basename "${1:-bin/auspex}")
@@ -55,18 +58,30 @@ for wl in "$SRC"/*.apx; do
             line="$line $(printf '%12s' '-')"; continue
         fi
         times=""
+        failed=0
         r=0
         while [ $r -lt "$RUNS" ]; do
             reset_db
-            [ $needs_setup = 1 ] && run_one "$engine" "$SRC/setup.apx" >/dev/null
+            if [ $needs_setup = 1 ] && ! run_one "$engine" "$SRC/setup.apx" >/dev/null 2>bench.err; then
+                failed=1
+            fi
             t0=$(now_us)
-            if ! run_one "$engine" "$wl" >/dev/null 2>bench.err; then
-                echo "$name on $engine failed:" >&2; cat bench.err >&2; exit 1
+            if [ $failed = 0 ] && ! run_one "$engine" "$wl" >/dev/null 2>bench.err; then
+                failed=1
+            fi
+            if [ $failed = 1 ]; then
+                echo "$name on $engine failed:" >&2; cat bench.err >&2
+                [ "${BENCH_KEEP_GOING:-0}" = 1 ] || exit 1
+                break
             fi
             t1=$(now_us)
             times="$times $((t1 - t0))"
             r=$((r + 1))
         done
+        if [ $failed = 1 ]; then
+            line="$line $(printf '%12s' fail)"
+            continue
+        fi
         median=$(echo $times | tr ' ' '\n' | sort -n | awk '{a[NR]=$1} END {printf "%.1f ms", a[int((NR+1)/2)]/1000}')
         line="$line $(printf '%12s' "$median")"
     done
