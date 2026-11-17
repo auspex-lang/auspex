@@ -20,6 +20,9 @@ int os_close(int fd);
 int os_read(int fd, void* buf, size_t count, off_t offset);
 int os_write(int fd, const void* buf, size_t count, off_t offset);
 int os_ftruncate(int fd, off_t length);
+/* Flushes a file's data to stable storage (fsync, or _commit on Windows);
+   0 on success, -1 on failure. */
+int os_fsync(int fd);
 
 /* Reads a line of any length into *line (grown as needed, like POSIX
    getline): returns its length including the newline, or -1 at end of

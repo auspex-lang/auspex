@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include "sql_engine.h"
+#include "os.h"
 
 #define PAGER_MAGIC   "MYDB"
 #define PAGER_VERSION 1
@@ -116,6 +117,7 @@ Pager* pager_open(const char* filename) {
 void pager_close(Pager* pager) {
     if (pager == NULL) return;
     write_header(pager);
+    os_fsync(pager->fd);
     os_close(pager->fd);
     free(pager);
 }
@@ -133,6 +135,10 @@ int pager_allocate_page(Pager* pager) {
             if (i >= pager->page_count) {
                 pager->page_count = i + 1;
             }
+            /* Persist the allocation now: if the header waited for
+               pager_close, a crash would leave this page marked free on
+               disk and it would be handed out twice after reopening. */
+            write_header(pager);
             return i;
         }
     }
@@ -141,7 +147,9 @@ int pager_allocate_page(Pager* pager) {
 
 void pager_free_page(Pager* pager, int page_num) {
     if (pager == NULL || page_num <= 0 || page_num >= BITMAP_BITS) return;
+    if (!bitmap_test(pager->bitmap, page_num)) return;
     bitmap_clear(pager->bitmap, page_num);
+    write_header(pager);
 }
 
 void pager_read_page(Pager* pager, int page_num, uint8_t* out) {
@@ -159,10 +167,14 @@ void pager_write_page(Pager* pager, int page_num, const uint8_t* data) {
     if (pager == NULL || data == NULL) return;
     if (page_num < 0 || page_num >= BITMAP_BITS) return;
 
-    if (page_num >= pager->page_count) {
+    int extends = page_num >= pager->page_count;
+    if (extends) {
         pager->page_count = page_num + 1;
         bitmap_set(pager->bitmap, page_num);
     }
 
     os_write(pager->fd, data, PAGE_SIZE, (off_t)page_num * PAGE_SIZE);
+    /* After the page itself, so the header never claims a page that is
+       not in the file yet. */
+    if (extends) write_header(pager);
 }
