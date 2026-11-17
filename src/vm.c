@@ -1893,6 +1893,27 @@ int vm_dynamic_exec(VM* vm, const char* sql) {
         }                                                                   \
     } while (0)
 
+/* Dispatch. On gcc and clang every handler ends by jumping straight to the
+   next opcode's handler through a label table (computed goto), so each
+   handler gets its own indirect jump instead of all sharing the switch's.
+   Elsewhere the switch dispatches as before. Define AUSPEX_NO_COMPUTED_GOTO
+   to force the switch. */
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(AUSPEX_NO_COMPUTED_GOTO)
+#define AUSPEX_COMPUTED_GOTO 1
+#define CASE(op)     case op: op_##op
+#define DEFAULT_CASE default: op_default
+#define DISPATCH()                                                          \
+    do {                                                                    \
+        op = *vm->ip++;                                                     \
+        goto *dispatch_table[op];                                           \
+    } while (0)
+#else
+#define AUSPEX_COMPUTED_GOTO 0
+#define CASE(op)     case op
+#define DEFAULT_CASE default
+#define DISPATCH()   continue
+#endif
+
 static InterpretResult vm_run(VM* vm, uint8_t* end) {
     /* Every instruction is followed by another or by the OP_END_OF_CODE
        sentinel (chunk_seal), and every jump target is checked against
@@ -1904,11 +1925,83 @@ static InterpretResult vm_run(VM* vm, uint8_t* end) {
         return INTERPRET_RUNTIME_ERROR;
     }
     GC_SAFEPOINT(vm);
+#if AUSPEX_COMPUTED_GOTO
+    /* One label per opcode; anything else lands on the default handler.
+       The range initializer is overridden on purpose. */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Woverride-init"
+    static void* dispatch_table[256] = {
+        [0 ... 255] = &&op_default,
+        [OP_CONST] = &&op_OP_CONST,
+        [OP_GET_LOCAL] = &&op_OP_GET_LOCAL,
+        [OP_GET_LOCAL16] = &&op_OP_GET_LOCAL16,
+        [OP_SET_LOCAL] = &&op_OP_SET_LOCAL,
+        [OP_SET_LOCAL16] = &&op_OP_SET_LOCAL16,
+        [OP_GET_GLOBAL] = &&op_OP_GET_GLOBAL,
+        [OP_SET_GLOBAL] = &&op_OP_SET_GLOBAL,
+        [OP_ADD] = &&op_OP_ADD,
+        [OP_SUB] = &&op_OP_SUB,
+        [OP_MUL] = &&op_OP_MUL,
+        [OP_DIV] = &&op_OP_DIV,
+        [OP_EQ] = &&op_OP_EQ,
+        [OP_LT] = &&op_OP_LT,
+        [OP_GT] = &&op_OP_GT,
+        [OP_NEGATE] = &&op_OP_NEGATE,
+        [OP_NOT] = &&op_OP_NOT,
+        [OP_DUP] = &&op_OP_DUP,
+        [OP_POP] = &&op_OP_POP,
+        [OP_SQL] = &&op_OP_SQL,
+        [OP_SQL_NEXT] = &&op_OP_SQL_NEXT,
+        [OP_GET_FIELD] = &&op_OP_GET_FIELD,
+        [OP_JZ] = &&op_OP_JZ,
+        [OP_JMP] = &&op_OP_JMP,
+        [OP_CALL] = &&op_OP_CALL,
+        [OP_CALL_AUTONOMOUS] = &&op_OP_CALL_AUTONOMOUS,
+        [OP_CALL_OUT] = &&op_OP_CALL_OUT,
+        [OP_CALL_OUT_AUTONOMOUS] = &&op_OP_CALL_OUT_AUTONOMOUS,
+        [OP_RETURN] = &&op_OP_RETURN,
+        [OP_NATIVE_CALL] = &&op_OP_NATIVE_CALL,
+        [OP_PRINT] = &&op_OP_PRINT,
+        [OP_ARRAY_BUILD] = &&op_OP_ARRAY_BUILD,
+        [OP_MAP_BUILD] = &&op_OP_MAP_BUILD,
+        [OP_INDEX_GET] = &&op_OP_INDEX_GET,
+        [OP_INDEX_SET] = &&op_OP_INDEX_SET,
+        [OP_SQL_EXEC] = &&op_OP_SQL_EXEC,
+        [OP_DROP_TRIGGER] = &&op_OP_DROP_TRIGGER,
+        [OP_SQL_BIND_INT] = &&op_OP_SQL_BIND_INT,
+        [OP_SQL_BIND_FLOAT] = &&op_OP_SQL_BIND_FLOAT,
+        [OP_SQL_BIND_STRING] = &&op_OP_SQL_BIND_STRING,
+        [OP_SQL_BEGIN] = &&op_OP_SQL_BEGIN,
+        [OP_SQL_COMMIT] = &&op_OP_SQL_COMMIT,
+        [OP_SQL_ROLLBACK] = &&op_OP_SQL_ROLLBACK,
+        [OP_SQL_SAVEPOINT] = &&op_OP_SQL_SAVEPOINT,
+        [OP_SQL_ROLLBACK_TO] = &&op_OP_SQL_ROLLBACK_TO,
+        [OP_SQL_RELEASE_SAVEPOINT] = &&op_OP_SQL_RELEASE_SAVEPOINT,
+        [OP_CURSOR_OPEN] = &&op_OP_CURSOR_OPEN,
+        [OP_CURSOR_FETCH] = &&op_OP_CURSOR_FETCH,
+        [OP_CURSOR_CLOSE] = &&op_OP_CURSOR_CLOSE,
+        [OP_CURSOR_ATTR] = &&op_OP_CURSOR_ATTR,
+        [OP_ROW_GET] = &&op_OP_ROW_GET,
+        [OP_SQL_GET_COLUMN] = &&op_OP_SQL_GET_COLUMN,
+        [OP_SQL_TO_ARRAY] = &&op_OP_SQL_TO_ARRAY,
+        [OP_STRUCT_BUILD] = &&op_OP_STRUCT_BUILD,
+        [OP_RUNTIME_ERROR] = &&op_OP_RUNTIME_ERROR,
+        [OP_RAISE] = &&op_OP_RAISE,
+        [OP_TRY] = &&op_OP_TRY,
+        [OP_END_TRY] = &&op_OP_END_TRY,
+        [OP_END_OF_CODE] = &&op_OP_END_OF_CODE,
+    };
+#pragma GCC diagnostic pop
+#endif
+    uint8_t op;
     for (;;) {
-dispatch:;
-        uint8_t op = *vm->ip++;
+dispatch:
+        op = *vm->ip++;
+#if AUSPEX_COMPUTED_GOTO
+        goto *dispatch_table[op];
+#endif
         switch (op) {
-            case OP_CONST: {
+            CASE(OP_CONST): {
                 if (vm->ip + 2 > end) return INTERPRET_RUNTIME_ERROR;
                 uint16_t idx = read_u16(vm->ip);
                 vm->ip += 2;
@@ -1923,9 +2016,9 @@ dispatch:;
                     set_runtime_error(vm, "Stack overflow");
                     THROW(vm);
                 }
-                break;
+                DISPATCH();
             }
-            case OP_GET_LOCAL: {
+            CASE(OP_GET_LOCAL): {
                 if (vm->ip + 1 > end) return INTERPRET_RUNTIME_ERROR;
                 uint8_t slot = *vm->ip++;
                 int depth = (int)(vm->stack_top - vm->frame_base);
@@ -1940,9 +2033,9 @@ dispatch:;
                     set_runtime_error(vm, "Invalid local variable slot");
                     THROW(vm);
                 }
-                break;
+                DISPATCH();
             }
-            case OP_GET_LOCAL16: {
+            CASE(OP_GET_LOCAL16): {
                 if (vm->ip + 2 > end) return INTERPRET_RUNTIME_ERROR;
                 uint16_t slot = read_u16(vm->ip);
                 vm->ip += 2;
@@ -1958,9 +2051,9 @@ dispatch:;
                     set_runtime_error(vm, "Invalid local variable slot");
                     THROW(vm);
                 }
-                break;
+                DISPATCH();
             }
-            case OP_SET_LOCAL: {
+            CASE(OP_SET_LOCAL): {
                 if (vm->ip + 1 > end) return INTERPRET_RUNTIME_ERROR;
                 uint8_t slot = *vm->ip++;
                 int depth = (int)(vm->stack_top - vm->frame_base);
@@ -1982,9 +2075,9 @@ dispatch:;
                         vm->repl_local_count = slot + 1;
                     }
                 }
-                break;
+                DISPATCH();
             }
-            case OP_SET_LOCAL16: {
+            CASE(OP_SET_LOCAL16): {
                 if (vm->ip + 2 > end) return INTERPRET_RUNTIME_ERROR;
                 uint16_t slot = read_u16(vm->ip);
                 vm->ip += 2;
@@ -2011,9 +2104,9 @@ dispatch:;
                         vm->repl_local_count = slot + 1;
                     }
                 }
-                break;
+                DISPATCH();
             }
-            case OP_GET_GLOBAL: {
+            CASE(OP_GET_GLOBAL): {
                 if (vm->ip + 1 > end) return INTERPRET_RUNTIME_ERROR;
                 uint8_t slot = *vm->ip++;
                 if (slot >= (size_t)vm->global_count) return INTERPRET_RUNTIME_ERROR;
@@ -2024,9 +2117,9 @@ dispatch:;
                     set_runtime_error(vm, "Stack overflow");
                     THROW(vm);
                 }
-                break;
+                DISPATCH();
             }
-            case OP_SET_GLOBAL: {
+            CASE(OP_SET_GLOBAL): {
                 if (vm->ip + 1 > end) return INTERPRET_RUNTIME_ERROR;
                 uint8_t slot = *vm->ip++;
                 if (slot >= (size_t)vm->global_count) {
@@ -2036,37 +2129,37 @@ dispatch:;
                 value_retain(v);
                 value_release(vm->globals[slot]);
                 vm->globals[slot] = v;
-                break;
+                DISPATCH();
             }
-            case OP_ADD: {
+            CASE(OP_ADD): {
                 if (!binary_op(vm, value_add)) return INTERPRET_RUNTIME_ERROR;
-                break;
+                DISPATCH();
             }
-            case OP_SUB: {
+            CASE(OP_SUB): {
                 if (!binary_op(vm, value_sub)) return INTERPRET_RUNTIME_ERROR;
-                break;
+                DISPATCH();
             }
-            case OP_MUL: {
+            CASE(OP_MUL): {
                 if (!binary_op(vm, value_mul)) return INTERPRET_RUNTIME_ERROR;
-                break;
+                DISPATCH();
             }
-            case OP_DIV: {
+            CASE(OP_DIV): {
                 if (!binary_op(vm, value_div)) return INTERPRET_RUNTIME_ERROR;
-                break;
+                DISPATCH();
             }
-            case OP_EQ: {
+            CASE(OP_EQ): {
                 if (!binary_op(vm, value_eq)) return INTERPRET_RUNTIME_ERROR;
-                break;
+                DISPATCH();
             }
-            case OP_LT: {
+            CASE(OP_LT): {
                 if (!binary_op(vm, value_lt)) return INTERPRET_RUNTIME_ERROR;
-                break;
+                DISPATCH();
             }
-            case OP_GT: {
+            CASE(OP_GT): {
                 if (!binary_op(vm, value_gt)) return INTERPRET_RUNTIME_ERROR;
-                break;
+                DISPATCH();
             }
-            case OP_NEGATE: {
+            CASE(OP_NEGATE): {
                 Value value;
                 if (!pop(vm, &value)) return INTERPRET_RUNTIME_ERROR;
                 int ok = 0;
@@ -2083,17 +2176,17 @@ dispatch:;
                 }
                 value_release(value);
                 if (!ok) return INTERPRET_RUNTIME_ERROR;
-                break;
+                DISPATCH();
             }
-            case OP_NOT: {
+            CASE(OP_NOT): {
                 Value value;
                 if (!pop(vm, &value)) return INTERPRET_RUNTIME_ERROR;
                 int ok = push(vm, value_bool(!value_is_truthy(value)));
                 value_release(value);
                 if (!ok) return INTERPRET_RUNTIME_ERROR;
-                break;
+                DISPATCH();
             }
-            case OP_DUP: {
+            CASE(OP_DUP): {
                 if (vm->stack_top <= vm->stack) {
                     set_runtime_error(vm, "Stack underflow");
                     return INTERPRET_RUNTIME_ERROR;
@@ -2104,15 +2197,15 @@ dispatch:;
                     value_release(value);
                     return INTERPRET_RUNTIME_ERROR;
                 }
-                break;
+                DISPATCH();
             }
-            case OP_POP: {
+            CASE(OP_POP): {
                 Value value;
                 if (!pop(vm, &value)) return INTERPRET_RUNTIME_ERROR;
                 value_release(value);
-                break;
+                DISPATCH();
             }
-            case OP_SQL: {
+            CASE(OP_SQL): {
                 if (vm->ip + 4 > end) return INTERPRET_RUNTIME_ERROR;
                 uint16_t idx = read_u16(vm->ip);
                 vm->ip += 2;
@@ -2160,9 +2253,9 @@ dispatch:;
                     }
                 }
                 vm->row_handle = NULL;
-                break;
+                DISPATCH();
             }
-            case OP_SQL_NEXT: {
+            CASE(OP_SQL_NEXT): {
                 if (vm->ip + 2 > end) return INTERPRET_RUNTIME_ERROR;
                 int16_t offset = (int16_t)read_u16(vm->ip);
                 vm->ip += 2;
@@ -2184,9 +2277,9 @@ dispatch:;
                     }
                     vm->ip = target;
                 }
-                break;
+                DISPATCH();
             }
-            case OP_GET_FIELD: {
+            CASE(OP_GET_FIELD): {
                 if (vm->ip + 2 > end) return INTERPRET_RUNTIME_ERROR;
                 uint16_t idx = read_u16(vm->ip);
                 vm->ip += 2;
@@ -2215,9 +2308,9 @@ dispatch:;
                     }
                 }
                 if (!push(vm, field_value)) return INTERPRET_RUNTIME_ERROR;
-                break;
+                DISPATCH();
             }
-            case OP_JZ: {
+            CASE(OP_JZ): {
                 if (vm->ip + 2 > end) return INTERPRET_RUNTIME_ERROR;
                 int16_t offset = (int16_t)read_u16(vm->ip);
                 vm->ip += 2;
@@ -2234,9 +2327,9 @@ dispatch:;
                     vm->ip = target;
                     if (offset < 0) GC_SAFEPOINT(vm);
                 }
-                break;
+                DISPATCH();
             }
-            case OP_JMP: {
+            CASE(OP_JMP): {
                 if (vm->ip + 2 > end) return INTERPRET_RUNTIME_ERROR;
                 int16_t offset = (int16_t)read_u16(vm->ip);
                 vm->ip += 2;
@@ -2247,9 +2340,9 @@ dispatch:;
                 }
                 vm->ip = target;
                 if (offset < 0) GC_SAFEPOINT(vm); /* loop back-edge */
-                break;
+                DISPATCH();
             }
-            case OP_CALL: {
+            CASE(OP_CALL): {
                 if (vm->ip + 3 > end) return INTERPRET_RUNTIME_ERROR;
                 uint16_t target = read_u16(vm->ip);
                 vm->ip += 2;
@@ -2272,9 +2365,9 @@ dispatch:;
                 vm->frame_base = vm->stack_top - arg_count;
                 vm->ip = vm->chunk->code + target;
                 GC_SAFEPOINT(vm);
-                break;
+                DISPATCH();
             }
-            case OP_CALL_AUTONOMOUS: {
+            CASE(OP_CALL_AUTONOMOUS): {
                 if (vm->ip + 3 > end) return INTERPRET_RUNTIME_ERROR;
                 uint16_t target = read_u16(vm->ip);
                 vm->ip += 2;
@@ -2311,9 +2404,9 @@ dispatch:;
                 } else {
                     THROW(vm);
                 }
-                break;
+                DISPATCH();
             }
-            case OP_CALL_OUT: {
+            CASE(OP_CALL_OUT): {
                 if (vm->ip + 4 > end) return INTERPRET_RUNTIME_ERROR;
                 uint16_t target = read_u16(vm->ip);
                 vm->ip += 2;
@@ -2349,9 +2442,9 @@ dispatch:;
                 vm->frame_base = vm->stack_top - arg_count;
                 vm->ip = vm->chunk->code + target;
                 GC_SAFEPOINT(vm);
-                break;
+                DISPATCH();
             }
-            case OP_CALL_OUT_AUTONOMOUS: {
+            CASE(OP_CALL_OUT_AUTONOMOUS): {
                 if (vm->ip + 4 > end) return INTERPRET_RUNTIME_ERROR;
                 uint16_t target = read_u16(vm->ip);
                 vm->ip += 2;
@@ -2410,9 +2503,9 @@ dispatch:;
                 } else {
                     THROW(vm);
                 }
-                break;
+                DISPATCH();
             }
-            case OP_RETURN: {
+            CASE(OP_RETURN): {
                 if (vm->frame_count == 0) {
                     return INTERPRET_OK;
                 }
@@ -2450,9 +2543,9 @@ dispatch:;
                 }
                 *vm->stack_top++ = result;
                 GC_SAFEPOINT(vm);
-                break;
+                DISPATCH();
             }
-            case OP_NATIVE_CALL: {
+            CASE(OP_NATIVE_CALL): {
                 if (vm->ip + 3 > end) return INTERPRET_RUNTIME_ERROR;
                 uint16_t idx = read_u16(vm->ip);
                 vm->ip += 2;
@@ -2483,17 +2576,17 @@ dispatch:;
                     return INTERPRET_RUNTIME_ERROR;
                 }
                 for (int i = 0; i < (int)argc; i++) value_release(argv[i]);
-                break;
+                DISPATCH();
             }
-            case OP_PRINT: {
+            CASE(OP_PRINT): {
                 Value value;
                 if (!pop(vm, &value)) return INTERPRET_RUNTIME_ERROR;
                 value_print(value);
                 printf("\n");
                 value_release(value);
-                break;
+                DISPATCH();
             }
-            case OP_ARRAY_BUILD: {
+            CASE(OP_ARRAY_BUILD): {
                 if (vm->ip + 2 > end) return INTERPRET_RUNTIME_ERROR;
                 uint16_t count = read_u16(vm->ip);
                 vm->ip += 2;
@@ -2539,9 +2632,9 @@ dispatch:;
                     value_release(temp[i]);
                 }
                 free(temp);
-                break;
+                DISPATCH();
             }
-            case OP_MAP_BUILD: {
+            CASE(OP_MAP_BUILD): {
                 if (vm->ip + 2 > end) return INTERPRET_RUNTIME_ERROR;
                 uint16_t count = read_u16(vm->ip);
                 vm->ip += 2;
@@ -2588,9 +2681,9 @@ dispatch:;
                     value_release(result);
                     return INTERPRET_RUNTIME_ERROR;
                 }
-                break;
+                DISPATCH();
             }
-            case OP_INDEX_GET: {
+            CASE(OP_INDEX_GET): {
                 Value idx_val;
                 Value arr_val;
                 if (!pop(vm, &idx_val)) return INTERPRET_RUNTIME_ERROR;
@@ -2613,7 +2706,7 @@ dispatch:;
                     }
                     value_release(idx_val);
                     value_release(arr_val);
-                    break;
+                    DISPATCH();
                 }
                 if (arr_val.type == VAL_ROW && idx_val.type == VAL_STRING) {
                     Value result = row_obj_get_field((RowObj*)arr_val.as.as_row_handle,
@@ -2626,7 +2719,7 @@ dispatch:;
                     }
                     value_release(idx_val);
                     value_release(arr_val);
-                    break;
+                    DISPATCH();
                 }
                 if (arr_val.type == VAL_MAP) {
                     if (idx_val.type != VAL_INT && idx_val.type != VAL_STRING) {
@@ -2652,15 +2745,15 @@ dispatch:;
                     }
                     value_release(idx_val);
                     value_release(arr_val);
-                    break;
+                    DISPATCH();
                 }
                 value_release(idx_val);
                 value_release(arr_val);
                 set_runtime_error(vm, "Invalid index");
                 THROW(vm);
-                break;
+                DISPATCH();
             }
-            case OP_INDEX_SET: {
+            CASE(OP_INDEX_SET): {
                 Value val;
                 Value idx_val;
                 Value arr_val;
@@ -2680,7 +2773,7 @@ dispatch:;
                     value_release(val);
                     value_release(idx_val);
                     value_release(arr_val);
-                    break;
+                    DISPATCH();
                 }
                 if (arr_val.type == VAL_ROW && idx_val.type == VAL_STRING) {
                     RowObj* row = (RowObj*)arr_val.as.as_row_handle;
@@ -2694,7 +2787,7 @@ dispatch:;
                     value_release(val);
                     value_release(idx_val);
                     value_release(arr_val);
-                    break;
+                    DISPATCH();
                 }
                 if (arr_val.type == VAL_MAP) {
                     if (idx_val.type != VAL_INT && idx_val.type != VAL_STRING) {
@@ -2714,16 +2807,16 @@ dispatch:;
                     value_release(val);
                     value_release(idx_val);
                     value_release(arr_val);
-                    break;
+                    DISPATCH();
                 }
                 value_release(val);
                 value_release(idx_val);
                 value_release(arr_val);
                 set_runtime_error(vm, "Invalid index assignment");
                 THROW(vm);
-                break;
+                DISPATCH();
             }
-            case OP_SQL_EXEC: {
+            CASE(OP_SQL_EXEC): {
                 if (vm->ip + 4 > end) return INTERPRET_RUNTIME_ERROR;
                 uint16_t idx = read_u16(vm->ip);
                 vm->ip += 2;
@@ -2758,9 +2851,9 @@ dispatch:;
                     THROW(vm);
                 }
                 vm->sql_rowcount = row_count;
-                break;
+                DISPATCH();
             }
-            case OP_DROP_TRIGGER: {
+            CASE(OP_DROP_TRIGGER): {
                 if (vm->ip + 2 > end) return INTERPRET_RUNTIME_ERROR;
                 uint16_t idx = read_u16(vm->ip);
                 vm->ip += 2;
@@ -2771,11 +2864,11 @@ dispatch:;
                     THROW(vm);
                 }
                 vm_drop_trigger(vm, name_value.as.as_string);
-                break;
+                DISPATCH();
             }
-            case OP_SQL_BIND_INT:
-            case OP_SQL_BIND_FLOAT:
-            case OP_SQL_BIND_STRING: {
+            CASE(OP_SQL_BIND_INT):
+            CASE(OP_SQL_BIND_FLOAT):
+            CASE(OP_SQL_BIND_STRING): {
                 Value v;
                 if (!pop(vm, &v)) return INTERPRET_RUNTIME_ERROR;
                 if (vm->driver == NULL) {
@@ -2789,9 +2882,9 @@ dispatch:;
                     THROW(vm);
                 }
                 vm->sql_params[vm->sql_param_count++] = v;
-                break;
+                DISPATCH();
             }
-            case OP_SQL_BEGIN: {
+            CASE(OP_SQL_BEGIN): {
                 if (vm->driver == NULL) {
                     set_runtime_error(vm, "No database driver");
                     THROW(vm);
@@ -2800,9 +2893,9 @@ dispatch:;
                     set_runtime_error_from_driver(vm, "BEGIN failed");
                     THROW(vm);
                 }
-                break;
+                DISPATCH();
             }
-            case OP_SQL_COMMIT: {
+            CASE(OP_SQL_COMMIT): {
                 if (vm->driver == NULL) {
                     set_runtime_error(vm, "No database driver");
                     THROW(vm);
@@ -2811,9 +2904,9 @@ dispatch:;
                     set_runtime_error_from_driver(vm, "COMMIT failed");
                     THROW(vm);
                 }
-                break;
+                DISPATCH();
             }
-            case OP_SQL_ROLLBACK: {
+            CASE(OP_SQL_ROLLBACK): {
                 if (vm->driver == NULL) {
                     set_runtime_error(vm, "No database driver");
                     THROW(vm);
@@ -2822,11 +2915,11 @@ dispatch:;
                     set_runtime_error_from_driver(vm, "ROLLBACK failed");
                     THROW(vm);
                 }
-                break;
+                DISPATCH();
             }
-            case OP_SQL_SAVEPOINT:
-            case OP_SQL_ROLLBACK_TO:
-            case OP_SQL_RELEASE_SAVEPOINT: {
+            CASE(OP_SQL_SAVEPOINT):
+            CASE(OP_SQL_ROLLBACK_TO):
+            CASE(OP_SQL_RELEASE_SAVEPOINT): {
                 if (vm->ip + 2 > end) return INTERPRET_RUNTIME_ERROR;
                 uint16_t idx = read_u16(vm->ip);
                 vm->ip += 2;
@@ -2858,9 +2951,9 @@ dispatch:;
                     set_runtime_error_from_driver(vm, op_name);
                     THROW(vm);
                 }
-                break;
+                DISPATCH();
             }
-            case OP_CURSOR_OPEN: {
+            CASE(OP_CURSOR_OPEN): {
                 if (vm->ip + 4 > end) return INTERPRET_RUNTIME_ERROR;
                 uint16_t idx = read_u16(vm->ip);
                 vm->ip += 2;
@@ -2927,9 +3020,9 @@ dispatch:;
                     value_release(value_cursor(cursor));
                     return INTERPRET_RUNTIME_ERROR;
                 }
-                break;
+                DISPATCH();
             }
-            case OP_CURSOR_FETCH: {
+            CASE(OP_CURSOR_FETCH): {
                 if (vm->ip + 1 > end) return INTERPRET_RUNTIME_ERROR;
                 uint8_t into_count = *vm->ip++;
                 if (vm->ip + into_count * 2 > end) return INTERPRET_RUNTIME_ERROR;
@@ -2995,9 +3088,9 @@ dispatch:;
                     }
                 }
                 value_release(cursor_value);
-                break;
+                DISPATCH();
             }
-            case OP_CURSOR_CLOSE: {
+            CASE(OP_CURSOR_CLOSE): {
                 Value cursor_value;
                 if (!pop(vm, &cursor_value)) return INTERPRET_RUNTIME_ERROR;
                 if (cursor_value.type != VAL_CURSOR || cursor_value.as.as_cursor == NULL) {
@@ -3008,7 +3101,7 @@ dispatch:;
                 CursorObj* cursor = cursor_value.as.as_cursor;
                 if (cursor == NULL) {
                     value_release(cursor_value);
-                    break;
+                    DISPATCH();
                 }
                 cursor->is_open = 0;
                 cursor->found = 0;
@@ -3022,9 +3115,9 @@ dispatch:;
                 }
                 cursor->row_handle = NULL;
                 value_release(cursor_value);
-                break;
+                DISPATCH();
             }
-            case OP_CURSOR_ATTR: {
+            CASE(OP_CURSOR_ATTR): {
                 if (vm->ip + 2 > end) return INTERPRET_RUNTIME_ERROR;
                 uint16_t idx = read_u16(vm->ip);
                 vm->ip += 2;
@@ -3066,9 +3159,9 @@ dispatch:;
                     return INTERPRET_RUNTIME_ERROR;
                 }
                 value_release(cursor_value);
-                break;
+                DISPATCH();
             }
-            case OP_ROW_GET: {
+            CASE(OP_ROW_GET): {
                 if (vm->ip + 2 > end) return INTERPRET_RUNTIME_ERROR;
                 uint16_t idx = read_u16(vm->ip);
                 vm->ip += 2;
@@ -3093,9 +3186,9 @@ dispatch:;
                     return INTERPRET_RUNTIME_ERROR;
                 }
                 value_release(row_value);
-                break;
+                DISPATCH();
             }
-            case OP_SQL_GET_COLUMN: {
+            CASE(OP_SQL_GET_COLUMN): {
                 if (vm->ip + 2 > end) return INTERPRET_RUNTIME_ERROR;
                 uint16_t idx = read_u16(vm->ip);
                 vm->ip += 2;
@@ -3114,9 +3207,9 @@ dispatch:;
                     value = value_from_cell(row->fields[idx].value, value_int(0));
                 }
                 if (!push(vm, value)) return INTERPRET_RUNTIME_ERROR;
-                break;
+                DISPATCH();
             }
-            case OP_SQL_TO_ARRAY: {
+            CASE(OP_SQL_TO_ARRAY): {
                 ArrayObj* array = array_new();
                 if (array == NULL) {
                     set_runtime_error_sql(vm, "out of memory");
@@ -3196,9 +3289,9 @@ dispatch:;
                     value_release(value_array(array));
                     return INTERPRET_RUNTIME_ERROR;
                 }
-                break;
+                DISPATCH();
             }
-            case OP_STRUCT_BUILD: {
+            CASE(OP_STRUCT_BUILD): {
                 if (vm->ip + 2 > end) return INTERPRET_RUNTIME_ERROR;
                 uint16_t idx = read_u16(vm->ip);
                 vm->ip += 2;
@@ -3265,9 +3358,9 @@ dispatch:;
                     value_release(result);
                     return INTERPRET_RUNTIME_ERROR;
                 }
-                break;
+                DISPATCH();
             }
-            case OP_RUNTIME_ERROR: {
+            CASE(OP_RUNTIME_ERROR): {
                 if (vm->ip + 2 > end) return INTERPRET_RUNTIME_ERROR;
                 uint16_t idx = read_u16(vm->ip);
                 vm->ip += 2;
@@ -3279,9 +3372,9 @@ dispatch:;
                     set_runtime_error(vm, msg_value.as.as_string);
                 }
                 THROW(vm);
-                break;
+                DISPATCH();
             }
-            case OP_RAISE: {
+            CASE(OP_RAISE): {
                 if (vm->ip + 4 > end) return INTERPRET_RUNTIME_ERROR;
                 uint16_t msg_idx = read_u16(vm->ip);
                 vm->ip += 2;
@@ -3295,9 +3388,9 @@ dispatch:;
                     set_runtime_error_ex(vm, msg_value.as.as_string, code);
                 }
                 THROW(vm);
-                break;
+                DISPATCH();
             }
-            case OP_TRY: {
+            CASE(OP_TRY): {
                 if (vm->ip + 4 > end) return INTERPRET_RUNTIME_ERROR;
                 uint16_t offset = read_u16(vm->ip);
                 vm->ip += 2;
@@ -3321,9 +3414,9 @@ dispatch:;
                 tf->frame_base = vm->frame_base;
                 tf->local_count = (int)local_count;
                 tf->stack_top = vm->stack_top;
-                break;
+                DISPATCH();
             }
-            case OP_END_TRY: {
+            CASE(OP_END_TRY): {
                 if (vm->ip + 2 > end) return INTERPRET_RUNTIME_ERROR;
                 int16_t offset = (int16_t)read_u16(vm->ip);
                 vm->ip += 2;
@@ -3345,14 +3438,14 @@ dispatch:;
                     THROW(vm);
                 }
                 vm->ip = target;
-                break;
+                DISPATCH();
             }
-            case OP_END_OF_CODE:
+            CASE(OP_END_OF_CODE):
                 /* Ran (or jumped) past the last instruction. */
                 vm->ip--;
                 set_runtime_error(vm, "Runtime error");
                 THROW(vm);
-            default:
+            DEFAULT_CASE:
                 set_runtime_error(vm, "Unknown opcode");
                 THROW(vm);
         }
