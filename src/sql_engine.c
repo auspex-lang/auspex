@@ -24,6 +24,10 @@ static Table* g_catalog[MAX_CATALOG_TABLES];
 static int    g_catalog_count = 0;
 static int    g_catalog_page  = -1;
 
+/* Error detail for DDL/constraint failures, consumed by custom_exec so the
+   runtime error message can name the violated constraint. */
+static char g_sql_ddl_error[256];
+
 typedef struct {
     char* name;
     char* select_query;
@@ -161,6 +165,7 @@ void catalog_clear(Context* ctx) {
 
 /* Reads a serialized cell (type tag + payload) from the catalog page. */
 static int catalog_read_cell(uint8_t* page, int* offset, Cell* cell) {
+    if (*offset >= PAGE_SIZE) return 0;
     cell->type = page[(*offset)++];
     switch (cell->type) {
         case VAL_NULL:
@@ -262,6 +267,7 @@ static void catalog_write_cell(uint8_t* page, int* offset, const Cell* cell) {
 }
 
 static int catalog_read_indexes(uint8_t* page, int* offset, Table* table) {
+    if (*offset >= PAGE_SIZE) return 0;
     uint8_t index_count = page[(*offset)++];
     if (index_count > MAX_TABLE_INDEXES) index_count = MAX_TABLE_INDEXES;
     if (index_count == 0) return 1;
@@ -270,6 +276,7 @@ static int catalog_read_indexes(uint8_t* page, int* offset, Table* table) {
     if (table->indexes == NULL) return 0;
 
     for (int i = 0; i < (int)index_count; i++) {
+        if (*offset >= PAGE_SIZE) return 0;
         uint8_t name_len = page[(*offset)++];
         if (*offset + name_len + 1 > PAGE_SIZE) return 0;
         table->indexes[i].name = malloc((size_t)name_len + 1);
@@ -279,9 +286,13 @@ static int catalog_read_indexes(uint8_t* page, int* offset, Table* table) {
         *offset += name_len;
 
         uint8_t col_len = page[(*offset)++];
-        if (*offset + col_len + 4 > PAGE_SIZE) return 0;
-        table->indexes[i].column_name = malloc((size_t)col_len + 1);
-        if (table->indexes[i].column_name == NULL) return 0;
+        if (*offset + col_len + 4 > PAGE_SIZE ||
+            (table->indexes[i].column_name = malloc((size_t)col_len + 1)) == NULL) {
+            /* Not counted in index_count yet, so free_table would miss it. */
+            free(table->indexes[i].name);
+            table->indexes[i].name = NULL;
+            return 0;
+        }
         memcpy(table->indexes[i].column_name, page + *offset, col_len);
         table->indexes[i].column_name[col_len] = '\0';
         *offset += col_len;
@@ -333,7 +344,19 @@ static int catalog_read_page(Context* ctx) {
         Table* table = calloc(1, sizeof(Table));
         if (table == NULL) return 0;
 
+        /* A record that runs past the page is corrupt: stop rather than read
+           out of bounds. */
+#define CATALOG_NEED(n)                          \
+        do {                                     \
+            if (offset + (n) > PAGE_SIZE) {      \
+                free_table(table);               \
+                return 0;                        \
+            }                                    \
+        } while (0)
+
+        CATALOG_NEED(1);
         uint8_t name_len = page[offset++];
+        CATALOG_NEED((int)name_len + 1);
         table->name = malloc((size_t)name_len + 1);
         if (table->name == NULL) {
             free(table);
@@ -352,7 +375,9 @@ static int catalog_read_page(Context* ctx) {
         }
 
         for (int c = 0; c < (int)column_count; c++) {
+            CATALOG_NEED(1);
             uint8_t col_name_len = page[offset++];
+            CATALOG_NEED((int)col_name_len + (catalog_version >= 3 ? 2 : 1));
             table->columns[c].name = malloc((size_t)col_name_len + 1);
             if (table->columns[c].name == NULL) {
                 free_table(table);
@@ -376,6 +401,8 @@ static int catalog_read_page(Context* ctx) {
             }
         }
 
+        CATALOG_NEED(4);
+#undef CATALOG_NEED
         memcpy(&table->first_row_page, page + offset, sizeof(table->first_row_page));
         offset += 4;
         table->last_row_page = table->first_row_page;
@@ -395,6 +422,7 @@ static int catalog_read_page(Context* ctx) {
         uint8_t view_count = page[offset++];
         if (view_count > MAX_CATALOG_VIEWS) view_count = MAX_CATALOG_VIEWS;
         for (int i = 0; i < (int)view_count; i++) {
+            if (offset >= PAGE_SIZE) return 0;
             uint8_t name_len = page[offset++];
             if (offset + name_len + 2 > PAGE_SIZE) return 0;
             char* name = malloc((size_t)name_len + 1);
@@ -432,6 +460,7 @@ static int catalog_read_page(Context* ctx) {
         uint8_t sequence_count = page[offset++];
         if (sequence_count > MAX_CATALOG_SEQUENCES) sequence_count = MAX_CATALOG_SEQUENCES;
         for (int i = 0; i < (int)sequence_count; i++) {
+            if (offset >= PAGE_SIZE) return 0;
             uint8_t name_len = page[offset++];
             if (offset + name_len + 9 > PAGE_SIZE) return 0;
             char* name = malloc((size_t)name_len + 1);
@@ -459,8 +488,54 @@ static int catalog_read_page(Context* ctx) {
     return 1;
 }
 
+static size_t catalog_name_len(const char* name) {
+    size_t len = strlen(name);
+    return len > MAX_NAME_LEN ? MAX_NAME_LEN : len;
+}
+
+/* Bytes catalog_write_page needs for the current in-memory catalog. Mirrors
+   its layout exactly; callers that grow the catalog compare it against
+   PAGE_SIZE to refuse a change that would not fit. */
+static long catalog_encoded_size(void) {
+    long size = 4 + 4; /* magic, table count */
+    for (int t = 0; t < g_catalog_count; t++) {
+        Table* table = g_catalog[t];
+        size += 1 + (long)catalog_name_len(table->name);
+        size += 1; /* column count */
+        for (int c = 0; c < table->column_count; c++) {
+            size += 3 + (long)catalog_name_len(table->columns[c].name);
+            if (table->columns[c].flags & COL_FLAG_HAS_DEFAULT) {
+                size += catalog_cell_size(&table->columns[c].default_value);
+            }
+        }
+        size += 4 + 1; /* first row page, index count */
+        for (int i = 0; i < table->index_count; i++) {
+            size += 2 + (long)catalog_name_len(table->indexes[i].name) +
+                    (long)catalog_name_len(table->indexes[i].column_name) + 4;
+        }
+    }
+    size += 1; /* view count */
+    for (int i = 0; i < g_view_count; i++) {
+        size += 3 + (long)strlen(g_views[i].name) + (long)strlen(g_views[i].select_query);
+    }
+    size += 1; /* sequence count */
+    for (int i = 0; i < g_sequence_count; i++) {
+        size += 10 + (long)strlen(g_sequences[i].name);
+    }
+    return size;
+}
+
+static int catalog_fits(void) {
+    return catalog_encoded_size() <= PAGE_SIZE;
+}
+
+/* Writes the whole catalog to its page, or nothing: if the catalog does not
+   fit the page the write fails and the page on disk keeps its previous
+   contents. Every DDL that grows the catalog checks this and rolls back, so
+   memory and disk agree. */
 static int catalog_write_page(Context* ctx) {
     Pager* pager = ctx->pager;
+    if (!catalog_fits()) return 0;
     /* Page 1 is reserved for the catalog. */
     g_catalog_page = 1;
 
@@ -478,8 +553,10 @@ static int catalog_write_page(Context* ctx) {
     for (int t = 0; t < g_catalog_count; t++) {
         Table* table = g_catalog[t];
 
-        size_t name_len = strlen(table->name);
-        if (name_len > MAX_NAME_LEN) name_len = MAX_NAME_LEN;
+        /* catalog_fits() covered every record; the checks below only keep a
+           mismatch between the two from writing past the buffer. */
+        size_t name_len = catalog_name_len(table->name);
+        if (offset + 2 + (int)name_len > PAGE_SIZE) return 0;
         page[offset++] = (uint8_t)name_len;
         memcpy(page + offset, table->name, name_len);
         offset += (int)name_len;
@@ -491,7 +568,7 @@ static int catalog_write_page(Context* ctx) {
             int default_size = (table->columns[c].flags & COL_FLAG_HAS_DEFAULT)
                 ? catalog_cell_size(&table->columns[c].default_value)
                 : 0;
-            if (offset + 3 + (int)col_name_len + default_size > PAGE_SIZE) break;
+            if (offset + 3 + (int)col_name_len + default_size > PAGE_SIZE) return 0;
             page[offset++] = (uint8_t)col_name_len;
             memcpy(page + offset, table->columns[c].name, col_name_len);
             offset += (int)col_name_len;
@@ -502,22 +579,15 @@ static int catalog_write_page(Context* ctx) {
             }
         }
 
+        if (offset + 5 > PAGE_SIZE) return 0;
         memcpy(page + offset, &table->first_row_page, sizeof(table->first_row_page));
         offset += 4;
 
         page[offset++] = (uint8_t)table->index_count;
         for (int i = 0; i < table->index_count; i++) {
-            /* Index metadata is an optimization hint: if the catalog page is
-               nearly full, drop the remaining entries rather than overflow.
-               A lost index only costs a full scan after reopen. */
-            size_t idx_name_len = strlen(table->indexes[i].name);
-            size_t idx_col_len = strlen(table->indexes[i].column_name);
-            if (idx_name_len > MAX_NAME_LEN) idx_name_len = MAX_NAME_LEN;
-            if (idx_col_len > MAX_NAME_LEN) idx_col_len = MAX_NAME_LEN;
-            if (offset + 2 + (int)idx_name_len + (int)idx_col_len + 4 > PAGE_SIZE) {
-                page[offset - 1] = (uint8_t)i;
-                break;
-            }
+            size_t idx_name_len = catalog_name_len(table->indexes[i].name);
+            size_t idx_col_len = catalog_name_len(table->indexes[i].column_name);
+            if (offset + 2 + (int)idx_name_len + (int)idx_col_len + 4 > PAGE_SIZE) return 0;
             page[offset++] = (uint8_t)idx_name_len;
             memcpy(page + offset, table->indexes[i].name, idx_name_len);
             offset += (int)idx_name_len;
@@ -630,8 +700,28 @@ Table* catalog_create_table(Context* ctx, const char* name, const char** columns
     t->last_row_page = 0;
 
     g_catalog[g_catalog_count++] = t;
-    catalog_write_page(ctx);
+    if (!catalog_write_page(ctx)) {
+        g_catalog[--g_catalog_count] = NULL;
+        free_table(t);
+        snprintf(g_sql_ddl_error, sizeof(g_sql_ddl_error),
+                 "catalog page full: cannot persist table '%.200s'", name);
+        return NULL;
+    }
     return t;
+}
+
+/* Removes a table that has no rows yet from the catalog, in memory and on
+   disk. Used to undo a CREATE TABLE whose full definition does not fit. */
+static void catalog_discard_new_table(Context* ctx, Table* t) {
+    for (int i = 0; i < g_catalog_count; i++) {
+        if (g_catalog[i] != t) continue;
+        for (int j = i + 1; j < g_catalog_count; j++) g_catalog[j - 1] = g_catalog[j];
+        g_catalog[--g_catalog_count] = NULL;
+        free_table(t);
+        /* Smaller than what was on the page before, so this fits. */
+        catalog_write_page(ctx);
+        return;
+    }
 }
 
 Table* catalog_find_table(Context* ctx, const char* name) {
@@ -3020,10 +3110,6 @@ typedef struct {
     int         if_not_exists;
 } DdlStmt;
 
-/* Error detail for DDL/constraint failures, consumed by custom_exec so the
-   runtime error message can name the violated constraint. */
-static char g_sql_ddl_error[256];
-
 /* Parses a literal (number, string, or NULL) into a Cell. */
 static int sql_parse_literal_cell(SqlToken* tok, Cell* out) {
     if (tok->type == TOK_NUMBER) {
@@ -3592,7 +3678,14 @@ int sql_exec_ddl(const char* query, Context* ctx) {
                 t->columns[i].flags = stmt.column_flags[i];
                 t->columns[i].default_value = cell_dup(&stmt.column_defaults[i]);
             }
-            catalog_write_page(ctx);
+            if (!catalog_write_page(ctx)) {
+                /* The DEFAULT literals pushed the definition past the page. */
+                catalog_discard_new_table(ctx, t);
+                t = NULL;
+                snprintf(g_sql_ddl_error, sizeof(g_sql_ddl_error),
+                         "catalog page full: cannot persist table '%.200s'",
+                         stmt.table_name);
+            }
         }
         sql_free_ddl_stmt(&stmt);
         return t != NULL ? 1 : 0;
@@ -4455,6 +4548,15 @@ static int execute_alter_add_column(Context* ctx, const char* table_name,
         table->columns[table->column_count].default_value.as.as_int = 0;
     }
     table->column_count++;
+    if (!catalog_fits()) {
+        table->column_count--;
+        free_column(&table->columns[table->column_count]);
+        free_rows(rows, row_count);
+        snprintf(g_sql_ddl_error, sizeof(g_sql_ddl_error),
+                 "catalog page full: cannot add column '%.100s' to '%.100s'",
+                 column_name, table_name);
+        return 0;
+    }
 
     /* Rebuild the row chain; pre-existing rows get the DEFAULT (or NULL). */
     free_row_pages(ctx, table);
@@ -4729,7 +4831,12 @@ static int execute_create_index(Context* ctx, const char* index_name,
     }
     table->index_count++;
 
-    catalog_write_page(ctx);
+    if (!catalog_write_page(ctx)) {
+        table_drop_index_at(ctx, table, table->index_count - 1);
+        snprintf(g_sql_ddl_error, sizeof(g_sql_ddl_error),
+                 "catalog page full: cannot persist index '%.200s'", index_name);
+        return 0;
+    }
     return 1;
 }
 

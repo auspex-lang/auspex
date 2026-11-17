@@ -1662,6 +1662,175 @@ TEST(sql_date_default_and_index_and_delete) {
     cleanup(path);
 }
 
+/* ---- The catalog is one page; DDL that would overflow it fails (#121) ---- */
+
+static int count_rows(Context* ctx, const char* query) {
+    Result* res = sql_exec(query, ctx);
+    int n = res != NULL ? res->row_count : -1;
+    result_free(res);
+    return n;
+}
+
+/* Name of the i-th filler table: long, so a few dozen fill the page. */
+static void big_table_name(int i, char* out, size_t size) {
+    snprintf(out, size, "big_%0180d", i);
+}
+
+/* Creates big tables until the catalog refuses one; returns how many fit. */
+static int fill_catalog_with_big_tables(Context* ctx) {
+    for (int i = 0; i < 64; i++) {
+        char name[200];
+        char sql[300];
+        big_table_name(i, name, sizeof(name));
+        snprintf(sql, sizeof(sql), "CREATE TABLE %s (id INT, label STRING)", name);
+        if (!sql_exec_ddl(sql, ctx)) return i;
+    }
+    return 64;
+}
+
+TEST(sql_catalog_full_create_table_fails_cleanly) {
+    char* path = make_temp_path();
+    Context ctx = {path, NULL};
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    int created = fill_catalog_with_big_tables(&ctx);
+    /* The page filled up well before the 64-table limit. */
+    ASSERT_INT_EQ(1, created > 0 && created < 64);
+    char name[200];
+    big_table_name(created, name, sizeof(name));
+    ASSERT_PTR_NULL(catalog_find_table(&ctx, name));
+
+    big_table_name(0, name, sizeof(name));
+    char sql[300];
+    snprintf(sql, sizeof(sql), "INSERT INTO %s VALUES (1, 'one')", name);
+    ASSERT_INT_EQ(1, sql_exec_ddl(sql, &ctx));
+    catalog_close(&ctx);
+
+    /* Every table that was accepted is on disk, the refused one is not. */
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    for (int i = 0; i < created; i++) {
+        big_table_name(i, name, sizeof(name));
+        ASSERT_PTR_NOT_NULL(catalog_find_table(&ctx, name));
+    }
+    big_table_name(created, name, sizeof(name));
+    ASSERT_PTR_NULL(catalog_find_table(&ctx, name));
+    big_table_name(0, name, sizeof(name));
+    snprintf(sql, sizeof(sql), "SELECT id FROM %s", name);
+    ASSERT_INT_EQ(1, count_rows(&ctx, sql));
+    catalog_close(&ctx);
+    cleanup(path);
+}
+
+TEST(sql_catalog_full_reports_the_reason) {
+    char* path = make_temp_path();
+    DBDriver driver;
+    custom_driver_init(&driver);
+    ASSERT_INT_EQ(1, driver.open(&driver, path));
+    int refused = 0;
+    for (int i = 0; i < 64 && !refused; i++) {
+        char name[200];
+        char sql[300];
+        big_table_name(i, name, sizeof(name));
+        snprintf(sql, sizeof(sql), "CREATE TABLE %s (id INT)", name);
+        refused = driver.exec(&driver, sql, NULL, 0) < 0;
+    }
+    ASSERT_INT_EQ(1, refused);
+    ASSERT_PTR_NOT_NULL(strstr(driver.error_message, "catalog page full"));
+    driver.close(&driver);
+    cleanup(path);
+}
+
+TEST(sql_catalog_full_rolls_back_defaults_indexes_and_columns) {
+    char* path = make_temp_path();
+    Context ctx = {path, NULL};
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    int created = fill_catalog_with_big_tables(&ctx);
+    ASSERT_INT_EQ(1, created > 1 && created < 64);
+    /* Free one big table's worth of room, top the page up with small tables
+       (14 bytes each), then drop the last of those: between 14 and 27 bytes
+       are left. */
+    char sql[400];
+    char big_last[200];
+    big_table_name(created - 1, big_last, sizeof(big_last));
+    snprintf(sql, sizeof(sql), "DROP TABLE %s", big_last);
+    ASSERT_INT_EQ(1, sql_exec_ddl(sql, &ctx));
+    created--;
+    int small = 0;
+    for (; small < 64 - created; small++) {
+        snprintf(sql, sizeof(sql), "CREATE TABLE s%02d (a INT)", small);
+        if (!sql_exec_ddl(sql, &ctx)) break;
+    }
+    ASSERT_INT_EQ(1, small > 0 && small < 64 - created);
+    snprintf(sql, sizeof(sql), "DROP TABLE s%02d", small - 1);
+    ASSERT_INT_EQ(1, sql_exec_ddl(sql, &ctx));
+
+    char long_name[101];
+    memset(long_name, 'n', 100);
+    long_name[100] = '\0';
+
+    /* The bare table (12 bytes) fits; its 100-character DEFAULT does not. */
+    snprintf(sql, sizeof(sql), "CREATE TABLE x (a STRING DEFAULT '%s')", long_name);
+    ASSERT_INT_EQ(0, sql_exec_ddl(sql, &ctx));
+    ASSERT_PTR_NULL(catalog_find_table(&ctx, "x"));
+
+    char big0[200];
+    big_table_name(0, big0, sizeof(big0));
+    snprintf(sql, sizeof(sql), "INSERT INTO %s VALUES (1, 'one')", big0);
+    ASSERT_INT_EQ(1, sql_exec_ddl(sql, &ctx));
+
+    snprintf(sql, sizeof(sql), "CREATE INDEX %s ON %s (id)", long_name, big0);
+    ASSERT_INT_EQ(0, sql_exec_ddl(sql, &ctx));
+    ASSERT_INT_EQ(0, catalog_find_table(&ctx, big0)->index_count);
+
+    snprintf(sql, sizeof(sql), "ALTER TABLE %s ADD COLUMN %s INT", big0, long_name);
+    ASSERT_INT_EQ(0, sql_exec_ddl(sql, &ctx));
+    ASSERT_INT_EQ(2, catalog_find_table(&ctx, big0)->column_count);
+
+    /* Nothing leaked into the page: a table that needs the freed space still
+       fits. */
+    ASSERT_INT_EQ(1, sql_exec_ddl("CREATE TABLE y (a INT)", &ctx));
+    catalog_close(&ctx);
+
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    ASSERT_PTR_NULL(catalog_find_table(&ctx, "x"));
+    ASSERT_PTR_NOT_NULL(catalog_find_table(&ctx, "y"));
+    ASSERT_INT_EQ(0, catalog_find_table(&ctx, big0)->index_count);
+    ASSERT_INT_EQ(2, catalog_find_table(&ctx, big0)->column_count);
+    snprintf(sql, sizeof(sql), "SELECT id FROM %s", big0);
+    ASSERT_INT_EQ(1, count_rows(&ctx, sql));
+    catalog_close(&ctx);
+    cleanup(path);
+}
+
+TEST(sql_catalog_rejects_a_table_record_past_the_page) {
+    char* path = make_temp_path();
+    Context ctx = {path, NULL};
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("CREATE TABLE t (a INT)", &ctx));
+    catalog_close(&ctx);
+
+    /* Keep the magic and claim one table with an empty name and 255
+       columns. Every byte after that is 0x10: each column says it has a
+       16-byte name, type 16 and flags 16 (no DEFAULT), 19 bytes in all, so
+       the columns run off the end of the page. */
+    uint8_t page[PAGE_SIZE];
+    FILE* f = fopen(path, "r+b");
+    ASSERT_PTR_NOT_NULL(f);
+    ASSERT_INT_EQ(0, fseek(f, PAGE_SIZE, SEEK_SET));
+    ASSERT_INT_EQ(PAGE_SIZE, (int)fread(page, 1, PAGE_SIZE, f));
+    uint32_t table_count = 1;
+    memcpy(page + 4, &table_count, sizeof(table_count));
+    page[8] = 0;   /* name length */
+    page[9] = 255; /* column count */
+    memset(page + 10, 0x10, PAGE_SIZE - 10);
+    ASSERT_INT_EQ(0, fseek(f, PAGE_SIZE, SEEK_SET));
+    ASSERT_INT_EQ(PAGE_SIZE, (int)fwrite(page, 1, PAGE_SIZE, f));
+    fclose(f);
+
+    ASSERT_INT_EQ(0, catalog_open(&ctx));
+    catalog_close(&ctx);
+    cleanup(path);
+}
+
 int main(void) {
     RUN_TEST(sql_scan_returns_rows_from_full_middle_pages);
     RUN_TEST(sql_index_build_sees_rows_on_full_middle_pages);
@@ -1722,5 +1891,9 @@ int main(void) {
     RUN_TEST(sql_date_columns_compare_chronologically);
     RUN_TEST(sql_date_columns_reject_text_that_is_not_a_date);
     RUN_TEST(sql_date_default_and_index_and_delete);
+    RUN_TEST(sql_catalog_full_create_table_fails_cleanly);
+    RUN_TEST(sql_catalog_full_reports_the_reason);
+    RUN_TEST(sql_catalog_full_rolls_back_defaults_indexes_and_columns);
+    RUN_TEST(sql_catalog_rejects_a_table_record_past_the_page);
     TEST_SUMMARY();
 }
