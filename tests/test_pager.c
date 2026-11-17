@@ -191,7 +191,165 @@ TEST(os_fsync_flushes_files_and_rejects_bad_fds) {
     cleanup(path);
 }
 
+/* #113 phase 2: while a transaction is open, page writes and allocation
+   changes stay in memory. Reads see them; the file does not until commit. */
+TEST(pager_transaction_holds_writes_until_commit) {
+    char* path = make_temp_path();
+    char copy[300];
+    snprintf(copy, sizeof(copy), "%s.crash", path);
+    unlink(copy);
+
+    Pager* pager = pager_open(path);
+    ASSERT_PTR_NOT_NULL(pager);
+    ASSERT_INT_EQ(0, pager_in_transaction(pager));
+    ASSERT_INT_EQ(1, pager_begin(pager));
+    ASSERT_INT_EQ(1, pager_in_transaction(pager));
+    ASSERT_INT_EQ(0, pager_begin(pager)); /* no nesting */
+
+    int a = pager_allocate_page(pager);
+    uint8_t data[PAGE_SIZE];
+    memset(data, 0x3C, PAGE_SIZE);
+    pager_write_page(pager, a, data);
+    ASSERT_INT_EQ(1, pager_dirty_count(pager));
+
+    uint8_t read[PAGE_SIZE];
+    pager_read_page(pager, a, read);
+    ASSERT_INT_EQ(0, memcmp(data, read, PAGE_SIZE));
+
+    /* Nothing reached the file: neither the page nor the header. */
+    ASSERT_INT_EQ(1, snapshot_file(path, copy));
+    Pager* before = pager_open(copy);
+    ASSERT_PTR_NOT_NULL(before);
+    ASSERT_INT_EQ(2, pager_page_count(before));
+    pager_close(before);
+
+    ASSERT_INT_EQ(1, pager_commit(pager));
+    ASSERT_INT_EQ(0, pager_in_transaction(pager));
+    ASSERT_INT_EQ(0, pager_dirty_count(pager));
+
+    ASSERT_INT_EQ(1, snapshot_file(path, copy));
+    Pager* after = pager_open(copy);
+    ASSERT_PTR_NOT_NULL(after);
+    ASSERT_INT_EQ(a + 1, pager_page_count(after));
+    pager_read_page(after, a, read);
+    ASSERT_INT_EQ(0, memcmp(data, read, PAGE_SIZE));
+    pager_close(after);
+
+    pager_close(pager);
+    unlink(copy);
+    cleanup(path);
+}
+
+TEST(pager_rollback_restores_pages_and_allocation) {
+    char* path = make_temp_path();
+    Pager* pager = pager_open(path);
+    ASSERT_PTR_NOT_NULL(pager);
+
+    int kept = pager_allocate_page(pager);
+    uint8_t original[PAGE_SIZE];
+    memset(original, 0x11, PAGE_SIZE);
+    pager_write_page(pager, kept, original);
+    int count = pager_page_count(pager);
+
+    ASSERT_INT_EQ(1, pager_begin(pager));
+    uint8_t changed[PAGE_SIZE];
+    memset(changed, 0x22, PAGE_SIZE);
+    pager_write_page(pager, kept, changed);
+    int added = pager_allocate_page(pager);
+    pager_write_page(pager, added, changed);
+    pager_free_page(pager, kept);
+    pager_rollback(pager);
+    ASSERT_INT_EQ(0, pager_in_transaction(pager));
+    ASSERT_INT_EQ(0, pager_dirty_count(pager));
+
+    ASSERT_INT_EQ(count, pager_page_count(pager));
+    uint8_t read[PAGE_SIZE];
+    pager_read_page(pager, kept, read);
+    ASSERT_INT_EQ(0, memcmp(original, read, PAGE_SIZE));
+    /* `kept` is still allocated and `added` is free again. */
+    ASSERT_INT_EQ(added, pager_allocate_page(pager));
+
+    pager_close(pager);
+    cleanup(path);
+}
+
+/* Autobegin opens a transaction at the first change, so callers that write
+   between explicit transactions batch their writes too. */
+TEST(pager_autobegin_opens_transaction_on_first_change) {
+    char* path = make_temp_path();
+    Pager* pager = pager_open(path);
+    ASSERT_PTR_NOT_NULL(pager);
+    pager_set_autobegin(pager, 1);
+
+    uint8_t read[PAGE_SIZE];
+    pager_read_page(pager, 1, read);
+    ASSERT_INT_EQ(0, pager_in_transaction(pager)); /* reads do not open one */
+
+    int a = pager_allocate_page(pager);
+    ASSERT_INT_EQ(1, pager_in_transaction(pager));
+    uint8_t data[PAGE_SIZE];
+    memset(data, 0x77, PAGE_SIZE);
+    pager_write_page(pager, a, data);
+    ASSERT_INT_EQ(1, pager_commit(pager));
+    ASSERT_INT_EQ(0, pager_in_transaction(pager));
+
+    pager_write_page(pager, a, data);
+    ASSERT_INT_EQ(1, pager_in_transaction(pager));
+    pager_close(pager); /* commits the open transaction */
+
+    pager = pager_open(path);
+    ASSERT_PTR_NOT_NULL(pager);
+    ASSERT_INT_EQ(a + 1, pager_page_count(pager));
+    pager_read_page(pager, a, read);
+    ASSERT_INT_EQ(0, memcmp(data, read, PAGE_SIZE));
+    pager_close(pager);
+    cleanup(path);
+}
+
+/* catalog_close rewrites the catalog page on every close; when nothing
+   changed that must not make a transaction (and an fsync) out of it. */
+TEST(pager_transaction_ignores_writes_that_change_nothing) {
+    char* path = make_temp_path();
+    Pager* pager = pager_open(path);
+    ASSERT_PTR_NOT_NULL(pager);
+    int a = pager_allocate_page(pager);
+    uint8_t data[PAGE_SIZE];
+    memset(data, 0x42, PAGE_SIZE);
+    pager_write_page(pager, a, data);
+
+    ASSERT_INT_EQ(1, pager_begin(pager));
+    pager_write_page(pager, a, data);
+    ASSERT_INT_EQ(0, pager_dirty_count(pager));
+    data[7] = 0x43;
+    pager_write_page(pager, a, data);
+    ASSERT_INT_EQ(1, pager_dirty_count(pager));
+    data[7] = 0x42; /* back to the disk content: still dirty, still read back */
+    pager_write_page(pager, a, data);
+    uint8_t read[PAGE_SIZE];
+    pager_read_page(pager, a, read);
+    ASSERT_INT_EQ(0, memcmp(data, read, PAGE_SIZE));
+    ASSERT_INT_EQ(1, pager_commit(pager));
+
+    pager_close(pager);
+    cleanup(path);
+}
+
+TEST(pager_commit_without_transaction_fails) {
+    char* path = make_temp_path();
+    Pager* pager = pager_open(path);
+    ASSERT_PTR_NOT_NULL(pager);
+    ASSERT_INT_EQ(0, pager_commit(pager));
+    pager_rollback(pager); /* harmless */
+    pager_close(pager);
+    cleanup(path);
+}
+
 int main(void) {
+    RUN_TEST(pager_transaction_holds_writes_until_commit);
+    RUN_TEST(pager_rollback_restores_pages_and_allocation);
+    RUN_TEST(pager_autobegin_opens_transaction_on_first_change);
+    RUN_TEST(pager_transaction_ignores_writes_that_change_nothing);
+    RUN_TEST(pager_commit_without_transaction_fails);
     RUN_TEST(pager_creates_file_and_allocates_page);
     RUN_TEST(pager_preserves_data_after_reopen);
     RUN_TEST(pager_allocates_multiple_pages_and_tracks_free_list);
