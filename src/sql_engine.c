@@ -1371,7 +1371,13 @@ static SqlToken sql_next_token(SqlLexer* lex) {
         char quote = c;
         lex->current++;
         lex->start = lex->current;
-        while (*lex->current != '\0' && *lex->current != quote) {
+        /* A doubled quote inside the literal stands for one quote ('it''s');
+           sql_parse_literal_cell collapses it. */
+        while (*lex->current != '\0') {
+            if (*lex->current == quote) {
+                if (lex->current[1] != quote) break;
+                lex->current++;
+            }
             lex->current++;
         }
         SqlToken tok = sql_make_token(lex, TOK_STRING);
@@ -3281,8 +3287,15 @@ static int sql_parse_literal_cell(SqlToken* tok, Cell* out) {
         out->type = VAL_STRING;
         out->as.as_string = malloc((size_t)tok->length + 1);
         if (out->as.as_string == NULL) return 0;
-        memcpy(out->as.as_string, tok->text, (size_t)tok->length);
-        out->as.as_string[tok->length] = '\0';
+        /* The lexer starts the token just past its opening quote; a doubled
+           quote character inside stands for one. */
+        char quote = tok->text[-1];
+        int j = 0;
+        for (int i = 0; i < tok->length; i++) {
+            out->as.as_string[j++] = tok->text[i];
+            if (tok->text[i] == quote && i + 1 < tok->length && tok->text[i + 1] == quote) i++;
+        }
+        out->as.as_string[j] = '\0';
         return 1;
     }
     return 0;
