@@ -2820,6 +2820,109 @@ static int try_index_lookup(Context* ctx, Table* table, WhereNode* where,
     return 0;
 }
 
+/* Full scan of `table` that keeps only the rows satisfying `where` (every
+   row when it is NULL), with their locators when `out_locs` is not NULL.
+   Each record is decoded into one scratch row whose field names point at
+   the table's column names, and the WHERE clause runs on that. Only a
+   matching row is copied out with names of its own, so a row the filter
+   rejects costs no allocation beyond its string cells (#115). */
+static int scan_matching_rows(Context* ctx, Table* table, WhereNode* where,
+                              SelectStmt* stmt, Row** out_rows, RowLoc** out_locs,
+                              int* out_count) {
+    int ncols = table->column_count;
+    Field* scratch = calloc((size_t)(ncols > 0 ? ncols : 1), sizeof(Field));
+    if (scratch == NULL) return 0;
+    for (int c = 0; c < ncols; c++) scratch[c].name = table->columns[c].name; /* borrowed */
+    Row probe;
+    probe.fields = scratch;
+    probe.field_count = ncols;
+
+    Row* rows = NULL;
+    RowLoc* locs = NULL;
+    int count = 0;
+    int capacity = 0;
+    int page_num = table->first_row_page;
+    while (page_num != 0) {
+        uint8_t page[PAGE_SIZE];
+        pager_read_page(ctx->pager, page_num, page);
+        int data_end = row_page_data_end(page);
+        int offset = ROW_PAGE_HEADER_SIZE;
+        while (offset < data_end) {
+            int16_t record_size;
+            memcpy(&record_size, page + offset, sizeof(record_size));
+            if (record_size <= 0 || offset + (int)record_size > data_end) goto fail;
+
+            int cell_offset = 2; /* skip the length prefix */
+            int decoded = 0;
+            while (decoded < ncols &&
+                   deserialize_cell(page + offset, &cell_offset, &scratch[decoded].value)) {
+                decoded++;
+            }
+            int keep = decoded == ncols &&
+                       (where == NULL || where_eval(&probe, where, stmt) == 1);
+            Field* fields = keep ? malloc((size_t)(ncols > 0 ? ncols : 1) * sizeof(Field)) : NULL;
+            if (keep && fields != NULL) {
+                int named = 0;
+                for (; named < ncols; named++) {
+                    fields[named].name = strdup(table->columns[named].name);
+                    if (fields[named].name == NULL) break;
+                    fields[named].value = scratch[named].value; /* moved */
+                }
+                if (named < ncols) {
+                    for (int c = 0; c < named; c++) free(fields[c].name);
+                    free(fields);
+                    fields = NULL;
+                }
+            }
+            if (fields == NULL) {
+                /* Rejected, or failed: the scratch cells still own their text. */
+                for (int c = 0; c < decoded; c++) {
+                    if (cell_owns_text(scratch[c].value.type)) free(scratch[c].value.as.as_string);
+                }
+                if (decoded < ncols || keep) goto fail;
+                offset += (int)record_size;
+                continue;
+            }
+            if (count >= capacity) {
+                int new_capacity = capacity == 0 ? 8 : capacity * 2;
+                Row* new_rows = realloc(rows, (size_t)new_capacity * sizeof(Row));
+                if (new_rows != NULL) rows = new_rows;
+                RowLoc* new_locs = new_rows != NULL
+                    ? realloc(locs, (size_t)new_capacity * sizeof(RowLoc)) : NULL;
+                if (new_locs == NULL) {
+                    Row lost = {fields, ncols};
+                    free_row(&lost);
+                    goto fail;
+                }
+                locs = new_locs;
+                capacity = new_capacity;
+            }
+            rows[count].fields = fields;
+            rows[count].field_count = ncols;
+            locs[count].page = page_num;
+            locs[count].offset = offset;
+            count++;
+            offset += (int)record_size;
+        }
+        page_num = row_page_next(ctx->pager, page);
+    }
+    free(scratch);
+    *out_rows = rows;
+    *out_count = count;
+    if (out_locs != NULL) {
+        *out_locs = locs;
+    } else {
+        free(locs);
+    }
+    return 1;
+
+fail:
+    free(scratch);
+    free_rows(rows, count);
+    free(locs);
+    return 0;
+}
+
 /* A FROM source is usable when it names an existing table or view. Either side
    of a JOIN may be a view, because a view is materialized into rows wherever a
    table would be read. */
@@ -3028,7 +3131,8 @@ static Result* execute_select(Context* ctx, SelectStmt* stmt) {
         Table* table = catalog_find_table(ctx, stmt->table_name);
         if (table != NULL) {
             if (!try_index_lookup(ctx, table, stmt->where, &source_rows, &source_count, NULL) &&
-                !read_all_rows(ctx, table, &source_rows, &source_count)) {
+                !scan_matching_rows(ctx, table, stmt->where, stmt, &source_rows, NULL,
+                                    &source_count)) {
                 return result_create(0);
             }
         } else {
@@ -3996,57 +4100,7 @@ static int find_matching_rows(Context* ctx, Table* table, WhereNode* where,
         return 1;
     }
 
-    int capacity = 0;
-    int page_num = table->first_row_page;
-    while (page_num != 0) {
-        uint8_t page[PAGE_SIZE];
-        pager_read_page(ctx->pager, page_num, page);
-        int data_end = row_page_data_end(page);
-        int offset = ROW_PAGE_HEADER_SIZE;
-        while (offset < data_end) {
-            int16_t record_size;
-            memcpy(&record_size, page + offset, sizeof(record_size));
-            Row* row = (record_size > 0 && offset + (int)record_size <= data_end)
-                ? deserialize_row(table, page + offset)
-                : NULL;
-            if (row == NULL) goto fail;
-            if (where != NULL && !row_matches_where(row, where)) {
-                free_row(row);
-                free(row);
-            } else {
-                if (count >= capacity) {
-                    int new_capacity = capacity == 0 ? 8 : capacity * 2;
-                    Row* new_rows = realloc(rows, (size_t)new_capacity * sizeof(Row));
-                    if (new_rows != NULL) rows = new_rows;
-                    RowLoc* new_locs = new_rows != NULL
-                        ? realloc(locs, (size_t)new_capacity * sizeof(RowLoc)) : NULL;
-                    if (new_locs == NULL) {
-                        free_row(row);
-                        free(row);
-                        goto fail;
-                    }
-                    locs = new_locs;
-                    capacity = new_capacity;
-                }
-                rows[count] = *row;
-                locs[count].page = page_num;
-                locs[count].offset = offset;
-                count++;
-                free(row);
-            }
-            offset += (int)record_size;
-        }
-        page_num = row_page_next(ctx->pager, page);
-    }
-    *out_rows = rows;
-    *out_locs = locs;
-    *out_count = count;
-    return 1;
-
-fail:
-    free_rows(rows, count);
-    free(locs);
-    return 0;
+    return scan_matching_rows(ctx, table, where, NULL, out_rows, out_locs, out_count);
 }
 
 /* Empties one index and fills it again from the stored rows. Used when an
