@@ -68,6 +68,11 @@ Known limitations (deliberate, documented):
 - Views cannot be JOIN targets (JOIN sides must be base tables). Dropping a
   base table leaves its views behind; using them then fails at runtime.
 - Aggregates and GROUP BY are limited compared to SQLite.
+- The whole catalog (tables, columns and their DEFAULTs, indexes, views,
+  sequences) lives in one 4 KB page. A `create table`, `alter table … add
+  column`, `create index`, `create view` or `create_sequence` that would not
+  fit fails with `catalog page full` and changes nothing. Long table, column
+  and index names use the space up fastest.
 - Column types are `int`, `float`, `string`, `bool`, `date`, `timestamp`.
 
 Set `AUSPEX_INDEX_DEBUG=1` (MyPL's `MYPL_INDEX_DEBUG` still works) to trace
