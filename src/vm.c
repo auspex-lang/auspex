@@ -2622,13 +2622,14 @@ dispatch:
                         set_runtime_error(vm, "Key not found in map");
                         THROW(vm);
                     }
+                    /* map_get returned a reference of our own; the stack takes
+                       it over, as with array_get + value_retain above. */
                     if (!push(vm, result)) {
                         value_release(result);
                         value_release(idx_val);
                         value_release(arr_val);
                         return INTERPRET_RUNTIME_ERROR;
                     }
-                    value_release(result);
                     value_release(idx_val);
                     value_release(arr_val);
                     break;

@@ -239,6 +239,49 @@ TEST(phase6_custom_engine_forall_binds_scalar_array) {
     ASSERT_INT_EQ(1, strstr(out, "after=0") != NULL);
 }
 
+
+/* #118: reading a string out of a map left it one reference short, so the
+   program printed its output and then crashed on exit. Each program reads
+   string values through a different route and must exit cleanly. */
+TEST(phase6_reading_string_values_from_maps_exits_cleanly) {
+    static const char* const programs[] = {
+        /* the issue's reproduction */
+        "proc main() -> int {\n"
+        "    map<int, string> m;\n"
+        "    m[1] = \"one\";\n"
+        "    print m[1];\n"
+        "    return 0;\n"
+        "}\n",
+        /* map literal, string keys, a computed value, a read into a local */
+        "proc main() -> int {\n"
+        "    map<int, string> lit = {1: \"one\", 2: \"two\"};\n"
+        "    map<string, string> named;\n"
+        "    named[\"k\"] = concat(\"o\", \"ne\");\n"
+        "    string s = named[\"k\"];\n"
+        "    print concat(lit[2], s);\n"
+        "    return 0;\n"
+        "}\n",
+        /* the value read is still the map's after the reader lets it go */
+        "proc main() -> int {\n"
+        "    map<int, string> m;\n"
+        "    m[1] = concat(\"o\", \"ne\");\n"
+        "    for (int i = 0; i < 5; i = i + 1) {\n"
+        "        string s = m[1];\n"
+        "        s = \"x\";\n"
+        "    }\n"
+        "    m[1] = \"two\";\n"
+        "    print m[1];\n"
+        "    return 0;\n"
+        "}\n",
+    };
+    static const char* const expected[] = {"one", "twoone", "two"};
+    for (int i = 0; i < 3; i++) {
+        char out[512];
+        int rc = run_auspex(programs[i], NULL, out, sizeof(out));
+        ASSERT_INT_EQ(0, rc);
+        ASSERT_INT_EQ(1, strstr(out, expected[i]) != NULL);
+    }
+}
 int main(void) {
     RUN_TEST(phase6_map_string_key_methods);
     RUN_TEST(phase6_map_int_key_methods);
@@ -249,5 +292,6 @@ int main(void) {
     RUN_TEST(phase6_forall_delete_with_scalar_array);
     RUN_TEST(phase6_custom_engine_binds_static_sql);
     RUN_TEST(phase6_custom_engine_forall_binds_scalar_array);
+    RUN_TEST(phase6_reading_string_values_from_maps_exits_cleanly);
     TEST_SUMMARY();
 }

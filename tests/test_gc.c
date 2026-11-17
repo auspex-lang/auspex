@@ -192,6 +192,90 @@ TEST(gc_dbms_output_buffer_takes_one_reference_per_line) {
     vm_free(vm);
 }
 
+
+/* Reading m[k] used to drop a reference (#118): OP_INDEX_GET released the
+   reference map_get had taken for it after pushing the value, so the stack
+   held a string the map counted as its own only. The first release (a local
+   going away, the map being freed) then freed it under the other holder,
+   which crashed on exit. The map here is a package global, so it outlives
+   main and the returned string must carry one reference for each holder. */
+TEST(gc_map_read_gives_the_reader_its_own_reference) {
+    static const char* const value_types[] = {"int", "string"};
+    static const char* const keys[] = {"1", "\"k\""};
+    for (int i = 0; i < 2; i++) {
+        char source[1024];
+        snprintf(source, sizeof(source),
+            "package store is\n"
+            "    proc put(v string) -> int;\n"
+            "    func get() -> string;\n"
+            "end store;\n"
+            "package body store is\n"
+            "    map<%s, string> names;\n"
+            "    proc put(v string) -> int { names[%s] = v; return 0; }\n"
+            "    func get() -> string { return names[%s]; }\n"
+            "end store;\n"
+            "proc main() -> string {\n"
+            "    store.put(concat(\"o\", \"ne\"));\n"
+            "    return store.get();\n"
+            "}\n",
+            value_types[i], keys[i], keys[i]);
+        Chunk chunk;
+        init_chunk(&chunk);
+        char error[256];
+        ASSERT_INT_EQ(1, compile(source, &chunk, error, sizeof(error)));
+        VM* vm = vm_init();
+        ASSERT_INT_EQ(INTERPRET_OK, vm_interpret(vm, &chunk));
+        Value result = vm_pop(vm);
+        ASSERT_INT_EQ(VAL_STRING, result.type);
+        ASSERT_STRING_EQ("one", result.as.as_string);
+        /* The map in the package global, and the value main returned. */
+        ASSERT_INT_EQ(2, value_ref_count(result));
+        value_release(result);
+        vm_free(vm);
+        free_chunk(&chunk);
+    }
+}
+
+/* The other ways a map hands out one of its values: map_get and the key
+   natives (first, last, next, prior) each give the caller a reference of
+   its own, on top of the map's. */
+TEST(gc_map_accessors_give_the_caller_its_own_reference) {
+    VM* vm = vm_init();
+    MapObj* map = map_new();
+    Value a = value_string(strdup("a"));
+    Value b = value_string(strdup("b"));
+    Value text = value_string(strdup("payload"));
+    ASSERT_INT_EQ(1, map_set(map, a, text));
+    ASSERT_INT_EQ(1, map_set(map, b, value_int(2)));
+    value_release(a);
+    value_release(b);
+    value_release(text);
+    Value m = value_map(map);
+
+    Value got;
+    Value key_a = value_string(strdup("a"));
+    ASSERT_INT_EQ(1, map_get(map, key_a, &got));
+    ASSERT_STRING_EQ("payload", got.as.as_string);
+    ASSERT_INT_EQ(2, value_ref_count(got)); /* the map's and ours */
+    value_release(got);
+    ASSERT_INT_EQ(1, value_ref_count(got));
+
+    static const char* const natives[] = {"first", "last", "next", "prior"};
+    static const char* const expected[] = {"a", "b", "b", "a"};
+    for (int i = 0; i < 4; i++) {
+        Value argv[2] = {m, value_string(strdup(i == 2 ? "a" : "b"))};
+        Value key;
+        ASSERT_INT_EQ(1, native_call(vm, native_find(natives[i]), i < 2 ? 1 : 2, argv, &key));
+        ASSERT_STRING_EQ(expected[i], key.as.as_string);
+        ASSERT_INT_EQ(2, value_ref_count(key)); /* the map's key and ours */
+        value_release(key);
+        value_release(argv[1]);
+    }
+    ASSERT_INT_EQ(2, map_count(map));
+    value_release(key_a);
+    value_release(m);
+    vm_free(vm);
+}
 int main(void) {
     RUN_TEST(gc_string_starts_with_ref_count_one);
     RUN_TEST(gc_array_starts_with_ref_count_one);
@@ -203,5 +287,7 @@ int main(void) {
     RUN_TEST(gc_split_natives_give_each_element_one_owner);
     RUN_TEST(gc_copying_array_natives_take_one_reference_per_element);
     RUN_TEST(gc_dbms_output_buffer_takes_one_reference_per_line);
+    RUN_TEST(gc_map_read_gives_the_reader_its_own_reference);
+    RUN_TEST(gc_map_accessors_give_the_caller_its_own_reference);
     TEST_SUMMARY();
 }
