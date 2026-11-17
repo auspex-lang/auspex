@@ -223,8 +223,26 @@ Value value_cursor(CursorObj* cursor);
 CursorObj* cursor_obj_new(DBDriver* driver);
 void value_print(Value value);
 
-void value_retain(Value v);
-void value_release(Value v);
+/* Reference counting. Only strings, dates, timestamps, arrays, maps, rows
+   and cursors own memory; for every other type retain and release do
+   nothing. The VM retains and releases on nearly every instruction, so that
+   check is inlined here and only reference-counted values pay for a call. */
+void value_retain_heap(Value v);
+void value_release_heap(Value v);
+
+static inline int value_is_refcounted(int type) {
+    return type == VAL_STRING || type == VAL_DATE || type == VAL_TIMESTAMP ||
+           type == VAL_ARRAY || type == VAL_MAP || type == VAL_ROW || type == VAL_CURSOR;
+}
+
+static inline void value_retain(Value v) {
+    if (value_is_refcounted(v.type)) value_retain_heap(v);
+}
+
+static inline void value_release(Value v) {
+    if (value_is_refcounted(v.type)) value_release_heap(v);
+}
+
 int  value_ref_count(Value v);
 
 /* ---------------------------------------------------------------------------
