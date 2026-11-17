@@ -1881,16 +1881,31 @@ int vm_dynamic_exec(VM* vm, const char* sql) {
     return row_count;
 }
 
+/* The cycle collector runs at safepoints rather than before every
+   instruction: backward jumps, calls and returns. Allocation without one of
+   those is straight-line code, so it is bounded by the program's size. A
+   safepoint sits at the end of its handler, where the instruction is
+   complete and the VM holds no pointers into container interiors. */
+#define GC_SAFEPOINT(vm)                                                    \
+    do {                                                                    \
+        if (!(vm)->is_child && gc_container_allocations() >= g_gc_next_collection) { \
+            vm_gc_collect(vm);                                              \
+        }                                                                   \
+    } while (0)
+
 static InterpretResult vm_run(VM* vm, uint8_t* end) {
+    /* Every instruction is followed by another or by the OP_END_OF_CODE
+       sentinel (chunk_seal), and every jump target is checked against
+       `end`, so ip cannot leave the code without hitting the sentinel. */
+    Chunk* chunk = vm->chunk;
+    if (chunk == NULL || end != chunk->code + chunk->count ||
+        chunk->count >= chunk->capacity || *end != OP_END_OF_CODE) {
+        set_runtime_error(vm, "Chunk was not sealed before running");
+        return INTERPRET_RUNTIME_ERROR;
+    }
+    GC_SAFEPOINT(vm);
     for (;;) {
-dispatch:
-        if (!vm->is_child && gc_container_allocations() >= g_gc_next_collection) {
-            vm_gc_collect(vm);
-        }
-        if (vm->ip >= end) {
-            set_runtime_error(vm, "Runtime error");
-            THROW(vm);
-        }
+dispatch:;
         uint8_t op = *vm->ip++;
         switch (op) {
             case OP_CONST: {
@@ -2217,6 +2232,7 @@ dispatch:
                         THROW(vm);
                     }
                     vm->ip = target;
+                    if (offset < 0) GC_SAFEPOINT(vm);
                 }
                 break;
             }
@@ -2230,6 +2246,7 @@ dispatch:
                     THROW(vm);
                 }
                 vm->ip = target;
+                if (offset < 0) GC_SAFEPOINT(vm); /* loop back-edge */
                 break;
             }
             case OP_CALL: {
@@ -2254,6 +2271,7 @@ dispatch:
                 vm->frame_count++;
                 vm->frame_base = vm->stack_top - arg_count;
                 vm->ip = vm->chunk->code + target;
+                GC_SAFEPOINT(vm);
                 break;
             }
             case OP_CALL_AUTONOMOUS: {
@@ -2330,6 +2348,7 @@ dispatch:
                 vm->frame_count++;
                 vm->frame_base = vm->stack_top - arg_count;
                 vm->ip = vm->chunk->code + target;
+                GC_SAFEPOINT(vm);
                 break;
             }
             case OP_CALL_OUT_AUTONOMOUS: {
@@ -2430,6 +2449,7 @@ dispatch:
                     vm->frame_base[slot] = out_values[i];
                 }
                 *vm->stack_top++ = result;
+                GC_SAFEPOINT(vm);
                 break;
             }
             case OP_NATIVE_CALL: {
@@ -3327,6 +3347,11 @@ dispatch:
                 vm->ip = target;
                 break;
             }
+            case OP_END_OF_CODE:
+                /* Ran (or jumped) past the last instruction. */
+                vm->ip--;
+                set_runtime_error(vm, "Runtime error");
+                THROW(vm);
             default:
                 set_runtime_error(vm, "Unknown opcode");
                 THROW(vm);
@@ -3477,6 +3502,11 @@ InterpretResult vm_interpret(VM* vm, Chunk* chunk) {
     vm->local_count = 0;
     vm->capture_base = 1;
     vm->repl_local_count = 0;
+    if (!chunk_seal(chunk)) {
+        set_runtime_error(vm, "Out of memory");
+        return INTERPRET_RUNTIME_ERROR;
+    }
+    vm->ip = chunk->code;
     return vm_run(vm, chunk->code + chunk->count);
 }
 
@@ -3490,6 +3520,10 @@ InterpretResult vm_interpret_from(VM* vm, Chunk* chunk, int offset) {
     vm->chunk = chunk;
     if (offset < 0 || offset >= chunk->count) {
         set_runtime_error(vm, "Invalid fragment offset");
+        return INTERPRET_RUNTIME_ERROR;
+    }
+    if (!chunk_seal(chunk)) {
+        set_runtime_error(vm, "Out of memory");
         return INTERPRET_RUNTIME_ERROR;
     }
     vm->ip = chunk->code + offset;

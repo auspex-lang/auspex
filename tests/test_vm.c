@@ -1,4 +1,5 @@
 #include "test_harness.h"
+#include <string.h>
 #include "vm.h"
 #include "natives.h"
 
@@ -994,6 +995,61 @@ TEST(vm_not_false_returns_true_bool) {
     free_chunk(&chunk);
 }
 
+/* #110: there is no per-instruction bounds check; a chunk_seal sentinel
+   stops execution that runs or jumps past the last instruction. */
+TEST(vm_running_off_the_end_is_a_runtime_error) {
+    Chunk chunk;
+    init_chunk(&chunk);
+    int idx = add_constant(&chunk, value_int(1));
+    write_chunk(&chunk, OP_CONST);
+    write_chunk_u16(&chunk, (uint16_t)idx);
+    /* No OP_RETURN. Fill the buffer to capacity, so the sentinel needs a
+       grown buffer rather than a spare byte. */
+    while (chunk.count < chunk.capacity) write_chunk(&chunk, OP_DUP);
+
+    VM* vm = vm_init();
+    ASSERT_INT_EQ(INTERPRET_RUNTIME_ERROR, vm_interpret(vm, &chunk));
+    ASSERT_PTR_NOT_NULL(strstr(vm_get_error(vm), "Runtime error"));
+    vm_free(vm);
+    free_chunk(&chunk);
+}
+
+TEST(vm_jumping_to_the_end_is_a_runtime_error) {
+    Chunk chunk;
+    init_chunk(&chunk);
+    write_chunk(&chunk, OP_JMP);
+    write_chunk_u16(&chunk, 0); /* lands exactly on the end of the code */
+
+    VM* vm = vm_init();
+    ASSERT_INT_EQ(INTERPRET_RUNTIME_ERROR, vm_interpret(vm, &chunk));
+    ASSERT_PTR_NOT_NULL(strstr(vm_get_error(vm), "Runtime error"));
+    vm_free(vm);
+    free_chunk(&chunk);
+}
+
+TEST(vm_sentinel_is_overwritten_when_code_is_appended) {
+    /* The REPL appends to a chunk it already ran. */
+    Chunk chunk;
+    init_chunk(&chunk);
+    int one = add_constant(&chunk, value_int(1));
+    write_chunk(&chunk, OP_CONST);
+    write_chunk_u16(&chunk, (uint16_t)one);
+    write_chunk(&chunk, OP_RETURN);
+    VM* vm = vm_init();
+    ASSERT_INT_EQ(INTERPRET_OK, vm_interpret(vm, &chunk));
+    vm_pop(vm);
+
+    int start = chunk.count;
+    int two = add_constant(&chunk, value_int(2));
+    write_chunk(&chunk, OP_CONST);
+    write_chunk_u16(&chunk, (uint16_t)two);
+    write_chunk(&chunk, OP_RETURN);
+    ASSERT_INT_EQ(INTERPRET_OK, vm_interpret_from(vm, &chunk, start));
+    ASSERT_INT_EQ(2, vm_pop(vm).as.as_int);
+    vm_free(vm);
+    free_chunk(&chunk);
+}
+
 int main(void) {
     RUN_TEST(vm_init_and_free);
     RUN_TEST(vm_executes_constant_and_return);
@@ -1040,5 +1096,8 @@ int main(void) {
     RUN_TEST(vm_index_get_on_non_array_returns_error);
     RUN_TEST(vm_append_on_non_array_returns_error);
     RUN_TEST(vm_not_false_returns_true_bool);
+    RUN_TEST(vm_running_off_the_end_is_a_runtime_error);
+    RUN_TEST(vm_jumping_to_the_end_is_a_runtime_error);
+    RUN_TEST(vm_sentinel_is_overwritten_when_code_is_appended);
     TEST_SUMMARY();
 }
