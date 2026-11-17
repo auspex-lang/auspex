@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "sql_engine.h"
@@ -20,6 +21,7 @@ typedef struct {
 
 struct Pager {
     int     fd;
+    char*   journal_path; /* <db>-journal */
     int     page_count;
     uint8_t bitmap[BITMAP_BYTES];
 
@@ -181,16 +183,255 @@ static void begin_if_auto(Pager* pager) {
     if (!pager->in_txn && pager->autobegin) pager_begin(pager);
 }
 
+/* ---- test crash hook ---- */
+
+/* Built with -DAUSPEX_TEST_HOOKS only (bin/auspex_hooks, for the crash
+   tests): AUSPEX_TEST_CRASH_AT=<point>:<n> ends the process the n-th time
+   it reaches <point>, leaving the files as a crash would. */
+#ifdef AUSPEX_TEST_HOOKS
+static int crash_due(const char* point) {
+    static int hits = 0;
+    const char* spec = getenv("AUSPEX_TEST_CRASH_AT");
+    if (spec == NULL) return 0;
+    const char* colon = strchr(spec, ':');
+    if (colon == NULL) return 0;
+    size_t len = (size_t)(colon - spec);
+    if (strlen(point) != len || strncmp(spec, point, len) != 0) return 0;
+    return ++hits == atoi(colon + 1);
+}
+#define CRASH_EXIT() _Exit(99)
+#else
+#define crash_due(point) 0
+#define CRASH_EXIT() ((void)0)
+#endif
+
+/* ---- rollback journal (#113 phase 3) ----
+
+   <db>-journal exists only while a commit runs. It holds the original
+   image of every page the commit overwrites, so a commit that dies half
+   way can be undone the next time the database opens.
+
+   header (32 bytes): "APXJ" | u32 version | u32 page_size | u32 record_count
+                      | u32 original_page_count | u64 nonce | u32 checksum
+   record:            u32 page_no | page image | u32 checksum
+
+   Commit: write the records, then the header, fsync the journal and its
+   directory; write the pages and the database header, fsync the database;
+   delete the journal and fsync the directory. Deleting the journal is the
+   commit point. A journal that does not verify was never complete, so the
+   database was not touched yet and the journal is simply deleted. */
+
+#define JOURNAL_MAGIC   "APXJ"
+#define JOURNAL_VERSION 1
+#define JOURNAL_HEADER  32
+#define JOURNAL_RECORD  (4 + PAGE_SIZE + 4)
+
+static uint32_t checksum(uint32_t seed, const void* data, size_t len) {
+    /* FNV-1a, seeded so a record cannot verify under another journal's
+       nonce. */
+    const uint8_t* bytes = (const uint8_t*)data;
+    uint32_t h = 2166136261u ^ seed;
+    for (size_t i = 0; i < len; i++) {
+        h ^= bytes[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+static uint32_t record_checksum(uint64_t nonce, uint32_t page_no, const uint8_t* image) {
+    uint32_t h = checksum((uint32_t)nonce ^ (uint32_t)(nonce >> 32), &page_no, sizeof(page_no));
+    return checksum(h, image, PAGE_SIZE);
+}
+
+static off_t file_size(int fd) {
+    return lseek(fd, 0, SEEK_END);
+}
+
+static int pages_in_file(int fd) {
+    off_t size = file_size(fd);
+    if (size <= 0) return 0;
+    return (int)((size + PAGE_SIZE - 1) / PAGE_SIZE);
+}
+
+static void remove_journal(const char* journal_path) {
+    os_remove(journal_path);
+    os_fsync_dir(journal_path);
+}
+
+/* Undoes an interrupted commit from `journal_path`, if there is one.
+   Returns 1 when the database can be opened (no journal, a journal that
+   was never complete, or a successful rollback) and 0 when it cannot: a
+   journal from another version or page size, or an I/O error while
+   restoring. The journal is left in place then. */
+static int journal_recover(int db_fd, const char* journal_path) {
+    if (!os_file_exists(journal_path)) return 1;
+    int jfd = os_open(journal_path);
+    if (jfd < 0) return 0;
+
+    uint8_t header[JOURNAL_HEADER];
+    off_t jsize = file_size(jfd);
+    int complete = jsize >= JOURNAL_HEADER &&
+                   os_read(jfd, header, JOURNAL_HEADER, 0) == JOURNAL_HEADER &&
+                   memcmp(header, JOURNAL_MAGIC, 4) == 0;
+    uint32_t version = 0, page_size = 0, records = 0, original_pages = 0, stored = 0;
+    uint64_t nonce = 0;
+    if (complete) {
+        memcpy(&version, header + 4, 4);
+        memcpy(&page_size, header + 8, 4);
+        memcpy(&records, header + 12, 4);
+        memcpy(&original_pages, header + 16, 4);
+        memcpy(&nonce, header + 20, 8);
+        memcpy(&stored, header + 28, 4);
+        complete = checksum(0, header, 28) == stored;
+    }
+    if (complete && (version != JOURNAL_VERSION || page_size != PAGE_SIZE)) {
+        /* Not ours to discard: a newer build may know how to replay it. */
+        os_close(jfd);
+        return 0;
+    }
+    if (complete) {
+        complete = jsize >= (off_t)JOURNAL_HEADER + (off_t)records * JOURNAL_RECORD;
+    }
+
+    uint8_t* record = complete ? malloc(JOURNAL_RECORD) : NULL;
+    if (complete && record == NULL) {
+        os_close(jfd);
+        return 0;
+    }
+    /* Verify every record before touching the database. */
+    for (uint32_t i = 0; complete && i < records; i++) {
+        off_t at = (off_t)JOURNAL_HEADER + (off_t)i * JOURNAL_RECORD;
+        uint32_t page_no = 0, sum = 0;
+        if (os_read(jfd, record, JOURNAL_RECORD, at) != JOURNAL_RECORD) {
+            complete = 0;
+            break;
+        }
+        memcpy(&page_no, record, 4);
+        memcpy(&sum, record + 4 + PAGE_SIZE, 4);
+        if (record_checksum(nonce, page_no, record + 4) != sum) complete = 0;
+    }
+
+    int ok = 1;
+    if (complete) {
+        for (uint32_t i = 0; ok && i < records; i++) {
+            off_t at = (off_t)JOURNAL_HEADER + (off_t)i * JOURNAL_RECORD;
+            uint32_t page_no = 0;
+            if (os_read(jfd, record, JOURNAL_RECORD, at) != JOURNAL_RECORD) {
+                ok = 0;
+                break;
+            }
+            memcpy(&page_no, record, 4);
+            if (os_write(db_fd, record + 4, PAGE_SIZE, (off_t)page_no * PAGE_SIZE) != PAGE_SIZE) {
+                ok = 0;
+            }
+        }
+        if (ok && os_ftruncate(db_fd, (off_t)original_pages * PAGE_SIZE) != 0) ok = 0;
+        if (ok && os_fsync(db_fd) != 0) ok = 0;
+    }
+    free(record);
+    os_close(jfd);
+    if (!ok) return 0;
+    remove_journal(journal_path);
+    return 1;
+}
+
+static uint64_t make_nonce(const Pager* pager) {
+    static uint64_t counter = 0;
+    uint64_t n = (uint64_t)time(NULL) ^ ((uint64_t)getpid() << 32) ^
+                 (uint64_t)(uintptr_t)pager ^ (++counter * 0x9E3779B97F4A7C15ull);
+    return n;
+}
+
+/* Writes the journal for the open transaction: the on-disk image of page 0
+   and of every dirty page the file already has. Returns the journal's fd,
+   or -1 on failure (nothing then exists on disk). `pages` holds the n
+   dirty page numbers in ascending order. */
+static int journal_write(Pager* pager, const int* pages, int n) {
+    int original_pages = pages_in_file(pager->fd);
+    int jfd = os_open(pager->journal_path);
+    if (jfd < 0) return -1;
+    if (os_ftruncate(jfd, 0) != 0) {
+        os_close(jfd);
+        remove_journal(pager->journal_path);
+        return -1;
+    }
+
+    uint64_t nonce = make_nonce(pager);
+    uint8_t* record = malloc(JOURNAL_RECORD);
+    int ok = record != NULL;
+    uint32_t count = 0;
+    /* Page 0 first (the header always changes), then the dirty pages. */
+    for (int i = -1; ok && i < n; i++) {
+        int page_no = i < 0 ? 0 : pages[i];
+        if (i >= 0 && page_no == 0) continue;
+        if (page_no >= original_pages) continue; /* new: truncation undoes it */
+        uint32_t no = (uint32_t)page_no;
+        memcpy(record, &no, 4);
+        if (os_read(pager->fd, record + 4, PAGE_SIZE, (off_t)page_no * PAGE_SIZE) != PAGE_SIZE) {
+            memset(record + 4, 0, PAGE_SIZE);
+        }
+        uint32_t sum = record_checksum(nonce, no, record + 4);
+        memcpy(record + 4 + PAGE_SIZE, &sum, 4);
+        off_t at = (off_t)JOURNAL_HEADER + (off_t)count * JOURNAL_RECORD;
+        if (os_write(jfd, record, JOURNAL_RECORD, at) != JOURNAL_RECORD) ok = 0;
+        count++;
+        if (crash_due("journal")) CRASH_EXIT();
+    }
+    free(record);
+
+    if (ok) {
+        uint8_t header[JOURNAL_HEADER];
+        memset(header, 0, sizeof(header));
+        uint32_t version = JOURNAL_VERSION, page_size = PAGE_SIZE;
+        uint32_t original = (uint32_t)original_pages;
+        memcpy(header, JOURNAL_MAGIC, 4);
+        memcpy(header + 4, &version, 4);
+        memcpy(header + 8, &page_size, 4);
+        memcpy(header + 12, &count, 4);
+        memcpy(header + 16, &original, 4);
+        memcpy(header + 20, &nonce, 8);
+        uint32_t sum = checksum(0, header, 28);
+        memcpy(header + 28, &sum, 4);
+        /* The header goes last: until it is on disk the journal does not
+           verify and is discarded on open. */
+        if (os_write(jfd, header, JOURNAL_HEADER, 0) != JOURNAL_HEADER) ok = 0;
+    }
+    if (ok && os_fsync(jfd) != 0) ok = 0;
+    if (ok && os_fsync_dir(pager->journal_path) != 0) ok = 0;
+    if (!ok) {
+        os_close(jfd);
+        remove_journal(pager->journal_path);
+        return -1;
+    }
+    if (crash_due("journal_synced")) CRASH_EXIT();
+    return jfd;
+}
+
 Pager* pager_open(const char* filename) {
     int fd = os_open(filename);
     if (fd < 0) return NULL;
 
     Pager* pager = calloc(1, sizeof(Pager));
-    if (pager == NULL) {
+    size_t name_len = strlen(filename);
+    char* journal_path = malloc(name_len + sizeof("-journal"));
+    if (pager == NULL || journal_path == NULL) {
+        free(pager);
+        free(journal_path);
         os_close(fd);
         return NULL;
     }
+    memcpy(journal_path, filename, name_len);
+    memcpy(journal_path + name_len, "-journal", sizeof("-journal"));
     pager->fd = fd;
+    pager->journal_path = journal_path;
+
+    /* Before the header is read: recovery may restore the header page. */
+    if (!journal_recover(fd, journal_path)) {
+        free(journal_path);
+        free(pager);
+        os_close(fd);
+        return NULL;
+    }
 
     off_t size = lseek(fd, 0, SEEK_END);
     if (size < 0) {
@@ -208,6 +449,7 @@ Pager* pager_open(const char* filename) {
         write_header(pager);
     } else {
         if (!read_header(pager)) {
+            free(pager->journal_path);
             free(pager);
             os_close(fd);
             return NULL;
@@ -230,6 +472,7 @@ void pager_close(Pager* pager) {
     }
     dirty_clear(pager);
     os_close(pager->fd);
+    free(pager->journal_path);
     free(pager);
 }
 
@@ -344,40 +587,56 @@ int pager_commit(Pager* pager) {
         pager->in_txn = 0; /* nothing to write */
         return 1;
     }
-    int ok = 1;
     /* In page order, so a file that grows is written front to back. */
+    int n = 0;
     int* pages = pager->dirty_count > 0
                      ? malloc((size_t)pager->dirty_count * sizeof(int)) : NULL;
-    if (pager->dirty_count > 0 && pages == NULL) ok = 0;
-    int n = 0;
+    int ok = pager->dirty_count == 0 || pages != NULL;
     if (ok) {
         for (int i = 0; i < pager->dirty_capacity; i++) {
             if (pager->dirty[i].page_no >= 0) pages[n++] = pager->dirty[i].page_no;
         }
         qsort(pages, (size_t)n, sizeof(int), compare_ints);
-        for (int i = 0; i < n && ok; i++) {
-            DirtyPage* slot = dirty_find(pager, pages[i]);
-            if (os_write(pager->fd, slot->data, PAGE_SIZE,
-                         (off_t)pages[i] * PAGE_SIZE) != PAGE_SIZE) {
-                ok = 0;
-            }
+    }
+
+    int jfd = ok ? journal_write(pager, pages, n) : -1;
+    if (jfd < 0) ok = 0;
+    int touched = 0; /* the database file was written to */
+    for (int i = 0; ok && i < n; i++) {
+        DirtyPage* slot = dirty_find(pager, pages[i]);
+        if (crash_due("db_torn")) {
+            os_write(pager->fd, slot->data, PAGE_SIZE / 2, (off_t)pages[i] * PAGE_SIZE);
+            CRASH_EXIT();
         }
+        touched = 1;
+        if (os_write(pager->fd, slot->data, PAGE_SIZE,
+                     (off_t)pages[i] * PAGE_SIZE) != PAGE_SIZE) {
+            ok = 0;
+        }
+        if (crash_due("db")) CRASH_EXIT();
     }
     free(pages);
     if (ok) {
+        touched = 1;
         write_header(pager);
         if (os_fsync(pager->fd) != 0) ok = 0;
-        else pager->synced = 1;
     }
+    if (ok && crash_due("db_synced")) CRASH_EXIT();
+    if (jfd >= 0) os_close(jfd);
+
     dirty_clear(pager);
     pager->in_txn = 0;
-    if (!ok) {
-        /* Without a journal (phase 3) the pages already written stay; at
-           least the in-memory header goes back to what the file had. */
-        pager->page_count = pager->saved_page_count;
-        memcpy(pager->bitmap, pager->saved_bitmap, BITMAP_BYTES);
+    if (ok) {
+        remove_journal(pager->journal_path); /* the commit point */
+        pager->synced = 1;
+        return 1;
     }
-    return ok;
+    /* Failed: put the file back as it was and the header with it. */
+    if (touched) journal_recover(pager->fd, pager->journal_path);
+    else if (jfd >= 0) remove_journal(pager->journal_path);
+    pager->page_count = pager->saved_page_count;
+    memcpy(pager->bitmap, pager->saved_bitmap, BITMAP_BYTES);
+    return 0;
 }
 
 void pager_rollback(Pager* pager) {
