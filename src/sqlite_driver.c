@@ -86,14 +86,19 @@ static int sqlite_open(DBDriver* driver, const char* conn) {
 }
 
 static int sqlite_flush_implicit(DBDriver* driver);
+static void stmt_cache_clear(SQLiteImpl* impl);
 
 static void sqlite_close(DBDriver* driver) {
     SQLiteImpl* impl = (SQLiteImpl*)driver->impl;
     if (impl == NULL) return;
     /* Commit the implicit transaction; an explicit one the program left open
-       is rolled back by sqlite3_close, as before. */
+       is rolled back when the connection closes, as before. */
     sqlite_flush_implicit(driver);
-    sqlite3_close(impl->db);
+    stmt_cache_clear(impl);
+    /* close_v2: if a result is still open, the connection is closed when
+       that statement is finalized instead of leaking (sqlite3_close would
+       return SQLITE_BUSY and leave it open). */
+    sqlite3_close_v2(impl->db);
     free(impl);
     driver->impl = NULL;
 }
@@ -207,6 +212,108 @@ static char* sqlite_normalize_types(const char* sql) {
     return out;
 }
 
+static unsigned long stmt_cache_hash(const char* sql) {
+    unsigned long h = 2166136261UL; /* FNV-1a */
+    for (const unsigned char* p = (const unsigned char*)sql; *p != '\0'; p++) {
+        h = (h ^ *p) * 16777619UL;
+    }
+    return h;
+}
+
+/* Returns a prepared statement for sql, checked out to the caller until
+   stmt_cache_release. Reuses an idle cached statement for the same text if
+   there is one; otherwise prepares a new one and caches it when a slot is
+   free or an idle entry can be evicted (least recently used). Statements
+   that do not fit stay uncached and are finalized on release. NULL (with
+   driver->error_message set) if the SQL does not prepare. */
+static sqlite3_stmt* stmt_cache_acquire(DBDriver* driver, const char* sql) {
+    SQLiteImpl* impl = (SQLiteImpl*)driver->impl;
+    unsigned long hash = stmt_cache_hash(sql);
+    for (int i = 0; i < impl->cache_count; i++) {
+        SQLiteCachedStmt* e = &impl->cache[i];
+        if (!e->checked_out && e->hash == hash && strcmp(e->sql, sql) == 0) {
+            e->checked_out = 1;
+            e->last_used = ++impl->cache_clock;
+            return e->stmt;
+        }
+    }
+
+    char* normalized = sqlite_normalize_types(sql);
+    if (normalized == NULL) {
+        snprintf(driver->error_message, sizeof(driver->error_message), "out of memory");
+        return NULL;
+    }
+    sqlite3_stmt* stmt = NULL;
+    int rc = sqlite3_prepare_v2(impl->db, normalized, -1, &stmt, NULL);
+    free(normalized);
+    if (rc != SQLITE_OK) {
+        snprintf(driver->error_message, sizeof(driver->error_message), "%s", sqlite3_errmsg(impl->db));
+        sqlite3_finalize(stmt);
+        return NULL;
+    }
+    /* An empty statement (only whitespace or comments) prepares to NULL. */
+    if (stmt == NULL) {
+        snprintf(driver->error_message, sizeof(driver->error_message), "empty SQL statement");
+        return NULL;
+    }
+
+    SQLiteCachedStmt* slot = NULL;
+    if (impl->cache_count < SQLITE_STMT_CACHE_SIZE) {
+        slot = &impl->cache[impl->cache_count];
+    } else {
+        for (int i = 0; i < impl->cache_count; i++) {
+            SQLiteCachedStmt* e = &impl->cache[i];
+            if (!e->checked_out && (slot == NULL || e->last_used < slot->last_used)) slot = e;
+        }
+    }
+    if (slot == NULL) return stmt; /* every entry is in use: run uncached */
+    char* key = strdup(sql);
+    if (key == NULL) return stmt;
+    if (slot == &impl->cache[impl->cache_count]) {
+        impl->cache_count++;
+    } else {
+        sqlite3_finalize(slot->stmt);
+        free(slot->sql);
+    }
+    slot->sql = key;
+    slot->hash = hash;
+    slot->stmt = stmt;
+    slot->checked_out = 1;
+    slot->last_used = ++impl->cache_clock;
+    return stmt;
+}
+
+/* Gives a statement from stmt_cache_acquire back. A cached one is reset
+   (ending its read, releasing its locks) and its bindings cleared; an
+   uncached one, or any after the driver closed, is finalized. */
+static void stmt_cache_release(SQLiteImpl* impl, sqlite3_stmt* stmt) {
+    if (stmt == NULL) return;
+    if (impl != NULL) {
+        for (int i = 0; i < impl->cache_count; i++) {
+            SQLiteCachedStmt* e = &impl->cache[i];
+            if (e->stmt == stmt) {
+                sqlite3_reset(stmt);
+                sqlite3_clear_bindings(stmt);
+                e->checked_out = 0;
+                return;
+            }
+        }
+    }
+    sqlite3_finalize(stmt);
+}
+
+/* Finalizes every idle cached statement. A checked-out one still backs an
+   open result whose owner will free it; it is dropped from the cache
+   unfinalized, and its later release finalizes it. */
+static void stmt_cache_clear(SQLiteImpl* impl) {
+    for (int i = 0; i < impl->cache_count; i++) {
+        SQLiteCachedStmt* e = &impl->cache[i];
+        if (!e->checked_out) sqlite3_finalize(e->stmt);
+        free(e->sql);
+    }
+    impl->cache_count = 0;
+}
+
 static int sqlite_is_ddl(const char* sql) {
     const char* p = sql;
     while (*p != '\0' && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++;
@@ -267,57 +374,38 @@ static int sqlite_exec(DBDriver* driver, const char* sql, Value* params, int par
 
 static int sqlite_exec_raw(DBDriver* driver, const char* sql, Value* params, int param_count) {
     SQLiteImpl* impl = (SQLiteImpl*)driver->impl;
-    char* normalized = sqlite_normalize_types(sql);
-    if (normalized == NULL) {
-        snprintf(driver->error_message, sizeof(driver->error_message), "out of memory");
-        return -1;
-    }
-    sqlite3_stmt* stmt = NULL;
-    int rc = sqlite3_prepare_v2(impl->db, normalized, -1, &stmt, NULL);
-    if (rc != SQLITE_OK) {
-        snprintf(driver->error_message, sizeof(driver->error_message), "%s", sqlite3_errmsg(impl->db));
-        free(normalized);
-        return -1;
-    }
+    sqlite3_stmt* stmt = stmt_cache_acquire(driver, sql);
+    if (stmt == NULL) return -1;
     if (!bind_params(driver, stmt, params, param_count)) {
-        sqlite3_finalize(stmt);
-        free(normalized);
+        stmt_cache_release(impl, stmt);
         return -1;
     }
-    rc = sqlite3_step(stmt);
+    int rc = sqlite3_step(stmt);
     int row_count = 0;
     if (rc == SQLITE_DONE || rc == SQLITE_ROW) {
         driver->error_message[0] = '\0';
-        row_count = sqlite_is_ddl(normalized) ? 1 : sqlite3_changes(impl->db);
+        row_count = sqlite_is_ddl(sql) ? 1 : sqlite3_changes(impl->db);
     } else {
         snprintf(driver->error_message, sizeof(driver->error_message), "%s", sqlite3_errmsg(impl->db));
         row_count = -1;
     }
-    sqlite3_finalize(stmt);
-    free(normalized);
+    stmt_cache_release(impl, stmt);
+    /* SQLite re-prepares a statement the schema change expired only when it
+       is next stepped, so until then its column count and names describe the
+       old schema (a cached SELECT * would report the old columns to
+       dbms_sql). Drop the whole cache after DDL instead. */
+    if (row_count >= 0 && sqlite_is_ddl(sql)) stmt_cache_clear(impl);
     return row_count;
 }
 
 static int sqlite_query(DBDriver* driver, const char* sql, Value* params, int param_count, void** result_handle) {
     SQLiteImpl* impl = (SQLiteImpl*)driver->impl;
-    char* normalized = sqlite_normalize_types(sql);
-    if (normalized == NULL) {
-        snprintf(driver->error_message, sizeof(driver->error_message), "out of memory");
-        return 0;
-    }
-    sqlite3_stmt* stmt = NULL;
-    int rc = sqlite3_prepare_v2(impl->db, normalized, -1, &stmt, NULL);
-    if (rc != SQLITE_OK) {
-        snprintf(driver->error_message, sizeof(driver->error_message), "%s", sqlite3_errmsg(impl->db));
-        free(normalized);
-        return 0;
-    }
+    sqlite3_stmt* stmt = stmt_cache_acquire(driver, sql);
+    if (stmt == NULL) return 0;
     if (!bind_params(driver, stmt, params, param_count)) {
-        sqlite3_finalize(stmt);
-        free(normalized);
+        stmt_cache_release(impl, stmt);
         return 0;
     }
-    free(normalized);
     *result_handle = stmt;
     driver->error_message[0] = '\0';
     return 1;
@@ -444,9 +532,7 @@ static const char* sqlite_result_column_name(DBDriver* driver, void* result_hand
 }
 
 static void sqlite_result_free(DBDriver* driver, void* result_handle) {
-    (void)driver;
-    sqlite3_stmt* stmt = (sqlite3_stmt*)result_handle;
-    sqlite3_finalize(stmt);
+    stmt_cache_release((SQLiteImpl*)driver->impl, (sqlite3_stmt*)result_handle);
 }
 
 static int sqlite_begin(DBDriver* driver) {

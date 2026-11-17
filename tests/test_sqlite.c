@@ -398,6 +398,151 @@ TEST(sqlite_rollback_without_begin_keeps_implicit_writes) {
     unlink(path);
 }
 
+/* --- prepared-statement cache (#108) --- */
+
+static int count_rows(DBDriver* driver, const char* sql, Value* params, int n) {
+    void* result = NULL;
+    if (!driver->query(driver, sql, params, n, &result)) return -1;
+    void* row = NULL;
+    int count = 0;
+    while (driver->result_next(driver, result, &row)) count++;
+    driver->result_free(driver, result);
+    return count;
+}
+
+TEST(sqlite_stmt_cache_reuses_statement_with_new_bindings) {
+    DBDriver driver;
+    sqlite_driver_init(&driver);
+    ASSERT_INT_EQ(1, driver.open(&driver, ":memory:"));
+    ASSERT_INT_EQ(1, driver.exec(&driver, "CREATE TABLE t (id INTEGER)", NULL, 0));
+    for (int i = 0; i < 5; i++) {
+        Value p = value_int(i);
+        ASSERT_INT_EQ(1, driver.exec(&driver, "INSERT INTO t VALUES (?)", &p, 1));
+    }
+    const char* sql = "SELECT id FROM t WHERE id >= ?";
+    Value p = value_int(3);
+    void* first = NULL;
+    ASSERT_INT_EQ(1, driver.query(&driver, sql, &p, 1, &first));
+    driver.result_free(&driver, first);
+    p = value_int(1);
+    void* second = NULL;
+    ASSERT_INT_EQ(1, driver.query(&driver, sql, &p, 1, &second));
+    ASSERT_PTR_EQ(first, second); /* same prepared statement, reset */
+    driver.result_free(&driver, second);
+    ASSERT_INT_EQ(4, count_rows(&driver, sql, &p, 1));
+    p = value_int(4);
+    ASSERT_INT_EQ(1, count_rows(&driver, sql, &p, 1));
+    driver.close(&driver);
+}
+
+TEST(sqlite_stmt_cache_nested_query_with_same_text) {
+    DBDriver driver;
+    sqlite_driver_init(&driver);
+    ASSERT_INT_EQ(1, driver.open(&driver, ":memory:"));
+    ASSERT_INT_EQ(1, driver.exec(&driver, "CREATE TABLE t (id INTEGER)", NULL, 0));
+    ASSERT_INT_EQ(1, driver.exec(&driver, "INSERT INTO t VALUES (1)", NULL, 0));
+    ASSERT_INT_EQ(1, driver.exec(&driver, "INSERT INTO t VALUES (2)", NULL, 0));
+    ASSERT_INT_EQ(1, driver.exec(&driver, "INSERT INTO t VALUES (3)", NULL, 0));
+    const char* sql = "SELECT id FROM t";
+    void* outer = NULL;
+    ASSERT_INT_EQ(1, driver.query(&driver, sql, NULL, 0, &outer));
+    void* row = NULL;
+    int outer_rows = 0;
+    int pairs = 0;
+    while (driver.result_next(&driver, outer, &row)) {
+        outer_rows++;
+        void* inner = NULL;
+        ASSERT_INT_EQ(1, driver.query(&driver, sql, NULL, 0, &inner));
+        ASSERT(inner != outer); /* checked out: not shared */
+        void* inner_row = NULL;
+        while (driver.result_next(&driver, inner, &inner_row)) pairs++;
+        driver.result_free(&driver, inner);
+    }
+    driver.result_free(&driver, outer);
+    ASSERT_INT_EQ(3, outer_rows);
+    ASSERT_INT_EQ(9, pairs);
+    driver.close(&driver);
+}
+
+TEST(sqlite_stmt_cache_evicts_beyond_capacity) {
+    DBDriver driver;
+    sqlite_driver_init(&driver);
+    ASSERT_INT_EQ(1, driver.open(&driver, ":memory:"));
+    ASSERT_INT_EQ(1, driver.exec(&driver, "CREATE TABLE t (id INTEGER)", NULL, 0));
+    ASSERT_INT_EQ(1, driver.exec(&driver, "INSERT INTO t VALUES (7)", NULL, 0));
+    char sql[64];
+    for (int i = 0; i < SQLITE_STMT_CACHE_SIZE * 2; i++) {
+        snprintf(sql, sizeof(sql), "SELECT id FROM t WHERE id < %d", i);
+        ASSERT_INT_EQ(i > 7 ? 1 : 0, count_rows(&driver, sql, NULL, 0));
+    }
+    ASSERT_INT_EQ(SQLITE_STMT_CACHE_SIZE, ((SQLiteImpl*)driver.impl)->cache_count);
+    /* An evicted text prepares again. */
+    ASSERT_INT_EQ(0, count_rows(&driver, "SELECT id FROM t WHERE id < 0", NULL, 0));
+    driver.close(&driver);
+}
+
+TEST(sqlite_stmt_cache_idle_statements_do_not_block_ddl) {
+    DBDriver driver;
+    sqlite_driver_init(&driver);
+    ASSERT_INT_EQ(1, driver.open(&driver, ":memory:"));
+    ASSERT_INT_EQ(1, driver.exec(&driver, "CREATE TABLE t (id INTEGER)", NULL, 0));
+    ASSERT_INT_EQ(1, driver.exec(&driver, "INSERT INTO t VALUES (1)", NULL, 0));
+    /* Leave the cursor mid-result, then free it: the cached statement must
+       be reset, or DROP TABLE fails with "database table is locked". */
+    void* result = NULL;
+    void* row = NULL;
+    ASSERT_INT_EQ(1, driver.query(&driver, "SELECT id FROM t", NULL, 0, &result));
+    ASSERT_INT_EQ(1, driver.result_next(&driver, result, &row));
+    driver.result_free(&driver, result);
+    ASSERT_INT_EQ(1, driver.exec(&driver, "DROP TABLE t", NULL, 0));
+    driver.close(&driver);
+}
+
+TEST(sqlite_stmt_cache_survives_schema_change) {
+    DBDriver driver;
+    sqlite_driver_init(&driver);
+    ASSERT_INT_EQ(1, driver.open(&driver, ":memory:"));
+    ASSERT_INT_EQ(1, driver.exec(&driver, "CREATE TABLE t (id INTEGER)", NULL, 0));
+    void* result = NULL;
+    ASSERT_INT_EQ(1, driver.query(&driver, "SELECT * FROM t", NULL, 0, &result));
+    ASSERT_INT_EQ(1, driver.result_column_count(&driver, result));
+    driver.result_free(&driver, result);
+    ASSERT_INT_EQ(1, driver.exec(&driver, "ALTER TABLE t ADD COLUMN name TEXT", NULL, 0));
+    ASSERT_INT_EQ(1, driver.query(&driver, "SELECT * FROM t", NULL, 0, &result));
+    ASSERT_INT_EQ(2, driver.result_column_count(&driver, result));
+    driver.result_free(&driver, result);
+    driver.close(&driver);
+}
+
+TEST(sqlite_stmt_cache_reports_errors) {
+    DBDriver driver;
+    sqlite_driver_init(&driver);
+    ASSERT_INT_EQ(1, driver.open(&driver, ":memory:"));
+    ASSERT_INT_EQ(1, driver.exec(&driver, "CREATE TABLE t (id INTEGER PRIMARY KEY)", NULL, 0));
+    Value p = value_int(1);
+    ASSERT_INT_EQ(1, driver.exec(&driver, "INSERT INTO t VALUES (?)", &p, 1));
+    /* The cached INSERT fails on the duplicate, keeps its message, and still
+       works afterwards. */
+    ASSERT_INT_EQ(-1, driver.exec(&driver, "INSERT INTO t VALUES (?)", &p, 1));
+    ASSERT(strstr(driver.error_message, "UNIQUE") != NULL);
+    p = value_int(2);
+    ASSERT_INT_EQ(1, driver.exec(&driver, "INSERT INTO t VALUES (?)", &p, 1));
+    ASSERT_INT_EQ(-1, driver.exec(&driver, "SELEKT 1", NULL, 0));
+    ASSERT(strstr(driver.error_message, "syntax error") != NULL);
+    ASSERT_INT_EQ(-1, driver.exec(&driver, "   ", NULL, 0));
+    driver.close(&driver);
+}
+
+TEST(sqlite_stmt_cache_result_freed_after_close) {
+    DBDriver driver;
+    sqlite_driver_init(&driver);
+    ASSERT_INT_EQ(1, driver.open(&driver, ":memory:"));
+    void* result = NULL;
+    ASSERT_INT_EQ(1, driver.query(&driver, "SELECT 1", NULL, 0, &result));
+    driver.close(&driver);
+    driver.result_free(&driver, result); /* finalizes, closing the db */
+}
+
 int main(void) {
     RUN_TEST(sqlite3_is_linked);
     RUN_TEST(sqlite_driver_crud);
@@ -415,5 +560,12 @@ int main(void) {
     RUN_TEST(sqlite_implicit_transaction_flush_commits);
     RUN_TEST(sqlite_explicit_transaction_starts_after_implicit_writes);
     RUN_TEST(sqlite_rollback_without_begin_keeps_implicit_writes);
+    RUN_TEST(sqlite_stmt_cache_reuses_statement_with_new_bindings);
+    RUN_TEST(sqlite_stmt_cache_nested_query_with_same_text);
+    RUN_TEST(sqlite_stmt_cache_evicts_beyond_capacity);
+    RUN_TEST(sqlite_stmt_cache_idle_statements_do_not_block_ddl);
+    RUN_TEST(sqlite_stmt_cache_survives_schema_change);
+    RUN_TEST(sqlite_stmt_cache_reports_errors);
+    RUN_TEST(sqlite_stmt_cache_result_freed_after_close);
     TEST_SUMMARY();
 }
