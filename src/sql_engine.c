@@ -5757,6 +5757,8 @@ int catalog_sequence_drop(Context* ctx, const char* name) {
 
 typedef struct {
     Context ctx;
+    int explicit_open; /* BEGIN ran and neither COMMIT nor ROLLBACK yet */
+    int exec_depth;    /* > 0 while a statement runs (row triggers nest) */
 } CustomDriverImpl;
 
 #define DEFAULT_DB_PATH "auspex.db"
@@ -5790,6 +5792,11 @@ static int custom_open(DBDriver* driver, const char* connection_string) {
         free(impl);
         return 0;
     }
+    impl->explicit_open = 0;
+    impl->exec_depth = 0;
+    /* The implicit transaction: the first write opens one, so a program's
+       writes reach the disk together instead of page by page. */
+    pager_set_autobegin(impl->ctx.pager, 1);
     driver->impl = impl;
     driver->error_message[0] = '\0';
     if (connection_string != NULL) {
@@ -5800,9 +5807,23 @@ static int custom_open(DBDriver* driver, const char* connection_string) {
     return 1;
 }
 
+/* Rereads the catalog from page 1 after a rollback put the page back. */
+static int catalog_reload(Context* ctx) {
+    catalog_clear(ctx);
+    return catalog_read_page(ctx);
+}
+
 static void custom_close(DBDriver* driver) {
     CustomDriverImpl* impl = (CustomDriverImpl*)driver->impl;
     if (impl == NULL) return;
+    /* An explicit transaction left open is rolled back, as on SQLite. BEGIN
+       committed everything before it, so nothing implicit is pending then;
+       catalog_close commits whatever it writes itself. */
+    if (impl->explicit_open) {
+        pager_rollback(impl->ctx.pager);
+        catalog_reload(&impl->ctx);
+        impl->explicit_open = 0;
+    }
     catalog_close(&impl->ctx);
     free(impl);
     driver->impl = NULL;
@@ -5817,9 +5838,23 @@ static int custom_exec(DBDriver* driver, const char* sql, Value* params, int par
     void* saved_user = g_row_trigger_user;
     g_row_trigger_fn = driver->row_trigger_fn;
     g_row_trigger_user = driver->row_trigger_user;
+    impl->exec_depth++;
     int row_count = sql_exec_ddl_params(sql, &impl->ctx, params, param_count);
+    impl->exec_depth--;
     g_row_trigger_fn = saved_fn;
     g_row_trigger_user = saved_user;
+    /* Commit a large implicit transaction early so a long script does not
+       hold every page it writes in memory. Programs cannot tell: implicit
+       transactions are never rolled back. */
+    if (impl->exec_depth == 0 && !impl->explicit_open &&
+        pager_dirty_count(impl->ctx.pager) >= CUSTOM_IMPLICIT_MAX_DIRTY_PAGES) {
+        catalog_write_page(&impl->ctx);
+        if (!pager_commit(impl->ctx.pager)) {
+            snprintf(driver->error_message, sizeof(driver->error_message),
+                     "custom engine: could not write to '%s'", impl->ctx.db_path);
+            return -1;
+        }
+    }
     if (!row_count) {
         if (g_sql_ddl_error[0] != '\0') {
             snprintf(driver->error_message, sizeof(driver->error_message),
@@ -5941,19 +5976,94 @@ static void custom_result_free(DBDriver* driver, void* result_handle) {
     result_free((Result*)result_handle);
 }
 
+int custom_driver_transaction_state(DBDriver* driver) {
+    if (driver == NULL || driver->impl == NULL) return CUSTOM_TXN_NONE;
+    CustomDriverImpl* impl = (CustomDriverImpl*)driver->impl;
+    if (impl->explicit_open) return CUSTOM_TXN_EXPLICIT;
+    return pager_in_transaction(impl->ctx.pager) ? CUSTOM_TXN_IMPLICIT : CUSTOM_TXN_NONE;
+}
+
+/* Transaction control from inside a running statement (a row trigger
+   body) would commit or discard half of that statement, and a rollback
+   would free the catalog tables the statement still uses. */
+static int custom_check_not_in_statement(DBDriver* driver, const char* what) {
+    CustomDriverImpl* impl = (CustomDriverImpl*)driver->impl;
+    if (impl->exec_depth == 0) return 1;
+    snprintf(driver->error_message, sizeof(driver->error_message),
+             "cannot %s while a statement is running", what);
+    return 0;
+}
+
+/* Writes the in-memory catalog to page 1 and commits the pager's open
+   transaction. The catalog write keeps page 1 in step with the tables'
+   root and row pages, which DML updates in memory. */
+static int custom_commit_pager(DBDriver* driver) {
+    CustomDriverImpl* impl = (CustomDriverImpl*)driver->impl;
+    if (!pager_in_transaction(impl->ctx.pager)) return 1;
+    catalog_write_page(&impl->ctx);
+    if (!pager_commit(impl->ctx.pager)) {
+        catalog_reload(&impl->ctx);
+        snprintf(driver->error_message, sizeof(driver->error_message),
+                 "custom engine: could not write to '%s'", impl->ctx.db_path);
+        return 0;
+    }
+    return 1;
+}
+
+static int custom_flush_implicit(DBDriver* driver) {
+    CustomDriverImpl* impl = (CustomDriverImpl*)driver->impl;
+    if (impl == NULL || impl->explicit_open) return 1;
+    return custom_commit_pager(driver);
+}
+
 static int custom_begin(DBDriver* driver) {
-    (void)driver;
-    return 0; /* not supported by custom engine */
+    CustomDriverImpl* impl = (CustomDriverImpl*)driver->impl;
+    if (!custom_check_not_in_statement(driver, "start a transaction")) return 0;
+    if (impl->explicit_open) {
+        snprintf(driver->error_message, sizeof(driver->error_message),
+                 "cannot start a transaction within a transaction");
+        return 0;
+    }
+    /* Writes before BEGIN are committed, as autocommit used to leave them,
+       so ROLLBACK undoes only what follows. */
+    if (!custom_commit_pager(driver)) return 0;
+    pager_begin(impl->ctx.pager);
+    impl->explicit_open = 1;
+    driver->error_message[0] = '\0';
+    return 1;
 }
 
 static int custom_commit(DBDriver* driver) {
-    (void)driver;
-    return 0; /* not supported by custom engine */
+    CustomDriverImpl* impl = (CustomDriverImpl*)driver->impl;
+    if (!custom_check_not_in_statement(driver, "commit")) return 0;
+    if (!impl->explicit_open) {
+        snprintf(driver->error_message, sizeof(driver->error_message),
+                 "cannot commit - no transaction is active");
+        return 0;
+    }
+    impl->explicit_open = 0;
+    if (!custom_commit_pager(driver)) return 0;
+    driver->error_message[0] = '\0';
+    return 1;
 }
 
 static int custom_rollback(DBDriver* driver) {
-    (void)driver;
-    return 0; /* not supported by custom engine */
+    CustomDriverImpl* impl = (CustomDriverImpl*)driver->impl;
+    if (!custom_check_not_in_statement(driver, "roll back")) return 0;
+    if (!impl->explicit_open) {
+        snprintf(driver->error_message, sizeof(driver->error_message),
+                 "cannot rollback - no transaction is active");
+        return 0;
+    }
+    impl->explicit_open = 0;
+    pager_rollback(impl->ctx.pager);
+    if (!catalog_reload(&impl->ctx)) {
+        snprintf(driver->error_message, sizeof(driver->error_message),
+                 "custom engine: could not reload the catalog after rollback");
+        return 0;
+    }
+    driver->error_message[0] = '\0';
+    return 1;
 }
 
 static int custom_savepoint(DBDriver* driver, const char* name) {
@@ -6034,7 +6144,7 @@ void custom_driver_init(DBDriver* driver) {
     driver->savepoint = custom_savepoint;
     driver->rollback_to_savepoint = custom_rollback_to_savepoint;
     driver->release_savepoint = custom_release_savepoint;
-    driver->flush_implicit = NULL;
+    driver->flush_implicit = custom_flush_implicit;
     driver->sequence_load = custom_sequence_load;
     driver->sequence_save = custom_sequence_save;
     driver->sequence_drop = custom_sequence_drop;
