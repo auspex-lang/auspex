@@ -110,6 +110,18 @@ void write_chunk(Chunk* chunk, uint8_t byte) {
     write_chunk_line(chunk, byte, 0, 0);
 }
 
+int chunk_seal(Chunk* chunk) {
+    if (chunk->count >= chunk->capacity) {
+        int capacity = grow_capacity(chunk->capacity);
+        uint8_t* new_code = realloc(chunk->code, (size_t)capacity);
+        if (new_code == NULL) return 0;
+        chunk->code = new_code;
+        chunk->capacity = capacity;
+    }
+    chunk->code[chunk->count] = OP_END_OF_CODE;
+    return 1;
+}
+
 int add_constant(Chunk* chunk, Value value) {
     if (chunk->constants_count >= chunk->constants_capacity) {
         chunk->constants_capacity = grow_capacity(chunk->constants_capacity);

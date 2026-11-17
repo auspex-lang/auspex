@@ -113,7 +113,12 @@ typedef enum {
     /* Wide local-slot variants used when a frame has more than 256 locals
        (slot index no longer fits in a byte). */
     OP_GET_LOCAL16,
-    OP_SET_LOCAL16
+    OP_SET_LOCAL16,
+    /* Never emitted by the compiler. chunk_seal() writes it one past the
+       last instruction, so running off the end of the code hits it rather
+       than reading past the buffer, and the VM needs no per-instruction
+       bounds check. */
+    OP_END_OF_CODE
 } OpCode;
 
 typedef enum {
@@ -196,6 +201,10 @@ typedef struct {
 void init_chunk(Chunk* chunk);
 void free_chunk(Chunk* chunk);
 void write_chunk(Chunk* chunk, uint8_t byte);
+/* Places OP_END_OF_CODE just past the last instruction (outside count, so
+   later writes overwrite it). Run before executing a chunk; returns 0 when
+   out of memory. */
+int  chunk_seal(Chunk* chunk);
 void write_chunk_line(Chunk* chunk, uint8_t byte, int line, int column);
 int  add_constant(Chunk* chunk, Value value);
 
