@@ -1954,6 +1954,40 @@ TEST(sql_delete_in_place_moves_index_entries_of_shifted_rows) {
     cleanup(path);
 }
 
+/* ---- Filtered full scans (#115) ----------------------------------------- */
+
+TEST(sql_filtered_scan_returns_owned_copies_of_matching_rows) {
+    char* path = make_temp_path();
+    Context ctx = {path, NULL};
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("CREATE TABLE p (id INT, name STRING, tag STRING)", &ctx));
+    for (int i = 0; i < 1000; i++) {
+        char sql[128];
+        snprintf(sql, sizeof(sql), "INSERT INTO p VALUES (%d, 'person-%d', '%s')",
+                 i, i, i % 100 == 7 ? "keep" : "drop");
+        ASSERT_INT_EQ(1, sql_exec_ddl(sql, &ctx));
+    }
+    /* No index: the scan filters on a string column, then on an int. */
+    Result* res = sql_exec("SELECT id, name, tag FROM p WHERE tag = 'keep' ORDER BY id", &ctx);
+    ASSERT_PTR_NOT_NULL(res);
+    ASSERT_INT_EQ(10, res->row_count);
+    for (int i = 0; i < 10; i++) {
+        Row* row = result_next(res);
+        ASSERT_PTR_NOT_NULL(row);
+        char expected[32];
+        snprintf(expected, sizeof(expected), "person-%d", i * 100 + 7);
+        ASSERT_INT_EQ(i * 100 + 7, row_get_field(row, "id").as.as_int);
+        ASSERT_STRING_EQ(expected, row_get_field(row, "name").as.as_string);
+        ASSERT_STRING_EQ("keep", row_get_field(row, "tag").as.as_string);
+    }
+    result_free(res);
+    ASSERT_INT_EQ(1, count_rows(&ctx, "SELECT id FROM p WHERE id = 999 AND tag = 'drop'"));
+    ASSERT_INT_EQ(0, count_rows(&ctx, "SELECT id FROM p WHERE id = 1000"));
+    ASSERT_INT_EQ(1000, count_rows(&ctx, "SELECT id FROM p"));
+    catalog_close(&ctx);
+    cleanup(path);
+}
+
 int main(void) {
     RUN_TEST(sql_scan_returns_rows_from_full_middle_pages);
     RUN_TEST(sql_index_build_sees_rows_on_full_middle_pages);
@@ -2021,5 +2055,6 @@ int main(void) {
     RUN_TEST(sql_update_in_place_keeps_indexes_in_step);
     RUN_TEST(sql_update_in_place_enforces_not_null);
     RUN_TEST(sql_delete_in_place_moves_index_entries_of_shifted_rows);
+    RUN_TEST(sql_filtered_scan_returns_owned_copies_of_matching_rows);
     TEST_SUMMARY();
 }
