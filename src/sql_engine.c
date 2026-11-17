@@ -3236,8 +3236,12 @@ typedef struct {
     int         column_flags[MAX_COLUMNS];
     Cell        column_defaults[MAX_COLUMNS];
     int         column_count;
-    Cell        values[MAX_COLUMNS];
+    /* INSERT ... VALUES: row_count rows of value_count cells each, row r
+       at values[r * value_count]. Heap-allocated; sql_free_ddl_stmt frees. */
+    Cell*       values;
     int         value_count;
+    int         row_count;
+    int         cell_count; /* cells parsed, including a partial last row */
     int         has_select;
     char*       select_query;
     int         if_not_exists;
@@ -3419,6 +3423,43 @@ static int sql_parse_create_table(const char* query, DdlStmt* stmt) {
     return tok.type == TOK_EOF;
 }
 
+static void sql_free_ddl_stmt(DdlStmt* stmt);
+
+/* Parses one parenthesised VALUES tuple, starting at its '(' in *tok, and
+   appends its cells to stmt->values. The first tuple sets value_count;
+   every later one must have the same number of values. */
+static int sql_parse_values_tuple(SqlLexer* lex, SqlToken* tok, DdlStmt* stmt,
+                                  int* capacity) {
+    if (tok->type != TOK_LPAREN) return 0;
+    int base = stmt->row_count * stmt->value_count;
+    int count = 0;
+    *tok = sql_next_token(lex);
+    while (tok->type != TOK_RPAREN && tok->type != TOK_EOF) {
+        if (count >= MAX_COLUMNS) return 0;
+        if (stmt->row_count > 0 && count >= stmt->value_count) return 0;
+        if (base + count >= *capacity) {
+            int grown = *capacity == 0 ? MAX_COLUMNS : *capacity * 2;
+            Cell* cells = realloc(stmt->values, (size_t)grown * sizeof(Cell));
+            if (cells == NULL) return 0;
+            stmt->values = cells;
+            *capacity = grown;
+        }
+        if (!sql_parse_literal_cell(tok, &stmt->values[base + count])) return 0;
+        stmt->cell_count++;
+        count++;
+        if (stmt->row_count == 0) stmt->value_count = count;
+        *tok = sql_next_token(lex);
+        if (tok->type == TOK_COMMA) {
+            *tok = sql_next_token(lex);
+        }
+    }
+    if (tok->type != TOK_RPAREN) return 0;
+    if (count != stmt->value_count) return 0;
+    stmt->row_count++;
+    *tok = sql_next_token(lex);
+    return 1;
+}
+
 static int sql_parse_insert(const char* query, DdlStmt* stmt) {
     memset(stmt, 0, sizeof(*stmt));
 
@@ -3441,25 +3482,22 @@ static int sql_parse_insert(const char* query, DdlStmt* stmt) {
     }
     if (tok.type != TOK_VALUES) return 0;
     tok = sql_next_token(&lex);
-    if (tok.type != TOK_LPAREN) return 0;
 
-    tok = sql_next_token(&lex);
-    while (tok.type != TOK_RPAREN && tok.type != TOK_EOF) {
-        if (stmt->value_count >= MAX_COLUMNS) return 0;
-        if (!sql_parse_literal_cell(&tok, &stmt->values[stmt->value_count])) {
+    /* VALUES (...)[, (...)]... */
+    int capacity = 0;
+    for (;;) {
+        if (!sql_parse_values_tuple(&lex, &tok, stmt, &capacity)) {
+            sql_free_ddl_stmt(stmt);
             return 0;
         }
-        stmt->value_count++;
-
+        if (tok.type != TOK_COMMA) break;
         tok = sql_next_token(&lex);
-        if (tok.type == TOK_COMMA) {
-            tok = sql_next_token(&lex);
-        }
     }
-
-    if (tok.type != TOK_RPAREN) return 0;
-    tok = sql_next_token(&lex);
-    return tok.type == TOK_EOF;
+    if (tok.type != TOK_EOF) {
+        sql_free_ddl_stmt(stmt);
+        return 0;
+    }
+    return 1;
 }
 
 static void sql_free_ddl_stmt(DdlStmt* stmt) {
@@ -3472,11 +3510,16 @@ static void sql_free_ddl_stmt(DdlStmt* stmt) {
             stmt->column_defaults[i].type = VAL_NULL;
         }
     }
-    for (int i = 0; i < stmt->value_count; i++) {
+    for (int i = 0; i < stmt->cell_count; i++) {
         if (cell_owns_text(stmt->values[i].type)) {
             free(stmt->values[i].as.as_string);
         }
     }
+    free(stmt->values);
+    stmt->values = NULL;
+    stmt->value_count = 0;
+    stmt->row_count = 0;
+    stmt->cell_count = 0;
     if (stmt->select_query != NULL) {
         free(stmt->select_query);
         stmt->select_query = NULL;
@@ -3924,34 +3967,44 @@ int sql_exec_ddl(const char* query, Context* ctx) {
             sql_free_ddl_stmt(&stmt);
             return 0;
         }
-        if (!cells_coerce_to_columns(t, stmt.values) ||
-            !constraints_apply_row(t, stmt.values)) {
-            sql_free_ddl_stmt(&stmt);
-            return 0;
-        }
-        if (g_row_trigger_fn != NULL) {
-            Value new_row = trigger_row_value_from_cells(t, stmt.values);
-            int fired = engine_fire_row_triggers(TRIGGER_BEFORE, TRIGGER_INSERT,
-                                                 t->name, NULL, &new_row);
-            value_release(new_row);
-            if (!fired) {
+        /* Coerce and check every row before inserting any, so a type or
+           NOT NULL error in a later row leaves the table untouched. A
+           uniqueness violation or a failing trigger in a later row still
+           leaves the earlier rows inserted: the custom engine has no
+           statement-level atomicity yet (#113). */
+        for (int r = 0; r < stmt.row_count; r++) {
+            Cell* cells = &stmt.values[r * stmt.value_count];
+            if (!cells_coerce_to_columns(t, cells) || !constraints_apply_row(t, cells)) {
                 sql_free_ddl_stmt(&stmt);
                 return 0;
             }
         }
-        if (!constraints_check_new_row(ctx, t, stmt.values)) {
-            sql_free_ddl_stmt(&stmt);
-            return 0;
-        }
-        catalog_insert(ctx, t, stmt.values);
-        if (g_row_trigger_fn != NULL) {
-            Value new_row = trigger_row_value_from_cells(t, stmt.values);
-            int fired = engine_fire_row_triggers(TRIGGER_AFTER, TRIGGER_INSERT,
-                                                 t->name, NULL, &new_row);
-            value_release(new_row);
-            if (!fired) {
+        for (int r = 0; r < stmt.row_count; r++) {
+            Cell* cells = &stmt.values[r * stmt.value_count];
+            if (g_row_trigger_fn != NULL) {
+                Value new_row = trigger_row_value_from_cells(t, cells);
+                int fired = engine_fire_row_triggers(TRIGGER_BEFORE, TRIGGER_INSERT,
+                                                     t->name, NULL, &new_row);
+                value_release(new_row);
+                if (!fired) {
+                    sql_free_ddl_stmt(&stmt);
+                    return 0;
+                }
+            }
+            if (!constraints_check_new_row(ctx, t, cells)) {
                 sql_free_ddl_stmt(&stmt);
                 return 0;
+            }
+            catalog_insert(ctx, t, cells);
+            if (g_row_trigger_fn != NULL) {
+                Value new_row = trigger_row_value_from_cells(t, cells);
+                int fired = engine_fire_row_triggers(TRIGGER_AFTER, TRIGGER_INSERT,
+                                                     t->name, NULL, &new_row);
+                value_release(new_row);
+                if (!fired) {
+                    sql_free_ddl_stmt(&stmt);
+                    return 0;
+                }
             }
         }
         sql_free_ddl_stmt(&stmt);

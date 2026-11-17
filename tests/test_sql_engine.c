@@ -881,6 +881,49 @@ static double select_single_float(Context* ctx, const char* sql, const char* fie
     return v;
 }
 
+TEST(sql_insert_multiple_value_rows) {
+    char* path = make_temp_path();
+    Context ctx = {path, NULL};
+
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("CREATE TABLE t (id INT, name STRING)", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO t VALUES (1, 'a'), (2, 'b, c'),(3,'d')", &ctx));
+    ASSERT_INT_EQ(3, select_count(&ctx, "SELECT * FROM t"));
+    Result* res = sql_exec("SELECT name FROM t WHERE id = 2", &ctx);
+    ASSERT_PTR_NOT_NULL(res);
+    ASSERT_INT_EQ(1, res->row_count);
+    ASSERT_STRING_EQ("b, c", row_get_field(&res->rows[0], "name").as.as_string);
+    result_free(res);
+
+    /* Malformed lists are rejected and insert nothing. */
+    ASSERT_INT_EQ(0, sql_exec_ddl("INSERT INTO t VALUES (4, 'e'), (5)", &ctx));
+    ASSERT_INT_EQ(0, sql_exec_ddl("INSERT INTO t VALUES (4, 'e'), (5, 'f', 6)", &ctx));
+    ASSERT_INT_EQ(0, sql_exec_ddl("INSERT INTO t VALUES (4, 'e'),", &ctx));
+    ASSERT_INT_EQ(0, sql_exec_ddl("INSERT INTO t VALUES (4, 'e') (5, 'f')", &ctx));
+    ASSERT_INT_EQ(3, select_count(&ctx, "SELECT * FROM t"));
+
+    catalog_close(&ctx);
+    cleanup(path);
+}
+
+TEST(sql_insert_multiple_rows_checks_all_before_inserting) {
+    char* path = make_temp_path();
+    Context ctx = {path, NULL};
+
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("CREATE TABLE t (id INT NOT NULL)", &ctx));
+    /* NOT NULL fails in the last row: none of the rows go in. */
+    ASSERT_INT_EQ(0, sql_exec_ddl("INSERT INTO t VALUES (1), (2), (NULL)", &ctx));
+    ASSERT_INT_EQ(0, select_count(&ctx, "SELECT * FROM t"));
+    /* So does a value the column type rejects. */
+    ASSERT_INT_EQ(1, sql_exec_ddl("CREATE TABLE d (day DATE)", &ctx));
+    ASSERT_INT_EQ(0, sql_exec_ddl("INSERT INTO d VALUES ('2026-01-02'), ('soon')", &ctx));
+    ASSERT_INT_EQ(0, select_count(&ctx, "SELECT * FROM d"));
+
+    catalog_close(&ctx);
+    cleanup(path);
+}
+
 /* SUM is an int over ints (as on SQLite), a float once any input is a
    float, and a float when the int sum would overflow. */
 TEST(sql_sum_result_type_follows_inputs) {
@@ -2046,6 +2089,8 @@ int main(void) {
     RUN_TEST(sql_aggregate_sum_avg_min_max);
     RUN_TEST(sql_aggregate_with_where);
     RUN_TEST(sql_sum_result_type_follows_inputs);
+    RUN_TEST(sql_insert_multiple_value_rows);
+    RUN_TEST(sql_insert_multiple_rows_checks_all_before_inserting);
     RUN_TEST(sql_join_basic);
     RUN_TEST(sql_join_select_star);
     RUN_TEST(sql_join_with_where_limit);
