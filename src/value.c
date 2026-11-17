@@ -420,7 +420,7 @@ Value value_cursor(CursorObj* cursor) {
     return value;
 }
 
-void value_retain(Value v) {
+void value_retain_heap(Value v) {
     if ((v.type == VAL_STRING || v.type == VAL_DATE || v.type == VAL_TIMESTAMP) && v.as.as_string != NULL) {
         string_obj_from_chars(v.as.as_string)->obj.ref_count++;
     } else if (v.type == VAL_ARRAY && v.as.as_array != NULL) {
@@ -442,7 +442,7 @@ static void cursor_obj_free(CursorObj* cursor) {
     free(cursor);
 }
 
-void value_release(Value v) {
+void value_release_heap(Value v) {
     if ((v.type == VAL_STRING || v.type == VAL_DATE || v.type == VAL_TIMESTAMP) && v.as.as_string != NULL) {
         StringObj* obj = string_obj_from_chars(v.as.as_string);
         if (--obj->obj.ref_count <= 0) {
