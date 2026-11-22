@@ -527,20 +527,11 @@ static void str_toupper(char* dest, const char* src, size_t size) {
 }
 
 #define UNIT_MARKER "// __AUSPEX_PROGRAM_UNIT__ "
-/* Written by MyPL; still read until v0.4.0. */
-#define LEGACY_UNIT_MARKER "// __MYPL_PROGRAM_UNIT__ "
-
-/* The first unit marker (current or legacy) at or after p; its length goes
-   to *len. NULL when there is none. */
+/* The first unit marker at or after p; its length goes to *len. NULL when
+   there is none. */
 static const char* find_unit_marker(const char* p, size_t* len) {
-    const char* m = strstr(p, UNIT_MARKER);
-    const char* legacy = strstr(p, LEGACY_UNIT_MARKER);
-    if (legacy != NULL && (m == NULL || legacy < m)) {
-        *len = strlen(LEGACY_UNIT_MARKER);
-        return legacy;
-    }
     *len = strlen(UNIT_MARKER);
-    return m;
+    return strstr(p, UNIT_MARKER);
 }
 
 static int parse_sidecar(const char* data, ProgramUnit** out_units, int* out_count) {

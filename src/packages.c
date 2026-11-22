@@ -492,8 +492,6 @@ static char* strip_main_procedure(const char* source) {
 }
 
 #define PACKAGE_SOURCE_MARKER "// __AUSPEX_PACKAGE_SOURCE__"
-/* Written by MyPL; still recognized until v0.4.0. */
-#define LEGACY_PACKAGE_SOURCE_MARKER "// __MYPL_PACKAGE_SOURCE__"
 
 static int custom_save_source(Context* ctx, const char* source, int append) {
     char* path = sidecar_path(ctx);
@@ -515,9 +513,7 @@ static int custom_save_source(Context* ctx, const char* source, int append) {
        the marker and ends with a newline: add neither a second time. */
     const char* body = stripped;
     while (*body == ' ' || *body == '\t' || *body == '\n' || *body == '\r') body++;
-    int has_marker =
-        strncmp(body, PACKAGE_SOURCE_MARKER, strlen(PACKAGE_SOURCE_MARKER)) == 0 ||
-        strncmp(body, LEGACY_PACKAGE_SOURCE_MARKER, strlen(LEGACY_PACKAGE_SOURCE_MARKER)) == 0;
+    int has_marker = strncmp(body, PACKAGE_SOURCE_MARKER, strlen(PACKAGE_SOURCE_MARKER)) == 0;
     size_t len = strlen(stripped);
     int ends_in_newline = len > 0 && stripped[len - 1] == '\n';
     fprintf(f, "%s%s%s", has_marker ? "" : PACKAGE_SOURCE_MARKER "\n", stripped,

@@ -23,17 +23,14 @@ scratch work. In the REPL, `.connect <path>` switches sessions.
 - `?var` parameters in the WHERE clause of a row-triggered UPDATE/DELETE are
   rejected with a clear runtime error.
 - Package sources persist in `_auspex_packages`, triggers/procs in
-  `_auspex_program_units`, sequences in `_auspex_sequences`. A database
-  written by MyPL (tables named `_mypl_*`) has its tables renamed the first
-  time Auspex opens it.
+  `_auspex_program_units`, sequences in `_auspex_sequences`.
 
 ## Custom SQL engine (the default, no SQLite needed)
 
 A small engine built into the binary: a file-backed catalog page plus row
 pages, secondary indexes as page-based B+ trees, and a growing catalog format
 (currently V5) that also stores constraints, views, and sequences. Without
-`--db`, the CLI opens `auspex.db` in the working directory (or a MyPL-era
-`mypl.db`, with a warning, if only that one exists).
+`--db`, the CLI opens `auspex.db` in the working directory.
 
 Supported:
 
@@ -83,5 +80,5 @@ Known limitations (deliberate, documented):
   and index names use the space up fastest.
 - Column types are `int`, `float`, `string`, `bool`, `date`, `timestamp`.
 
-Set `AUSPEX_INDEX_DEBUG=1` (MyPL's `MYPL_INDEX_DEBUG` still works) to trace
+Set `AUSPEX_INDEX_DEBUG=1` to trace
 index-assisted lookups on stderr.

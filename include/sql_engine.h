@@ -206,9 +206,7 @@ void custom_driver_init(DBDriver* driver);
 #define CUSTOM_IMPLICIT_MAX_DIRTY_PAGES 2048
 int custom_driver_transaction_state(DBDriver* driver);
 
-/* Default custom-engine database: auspex.db, or MyPL's mypl.db (with a
-   one-time deprecation warning on stderr) when only that one exists. The
-   mypl.db fallback goes away in v0.4.0. */
+/* Default custom-engine database: auspex.db. */
 const char* default_db_path(void);
 
 /* Storage layer */

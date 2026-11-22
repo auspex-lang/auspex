@@ -80,7 +80,7 @@ test: $(TARGET)
 	$(CC) $(CFLAGS) -Itests -o $(BINDIR)/test_phase12 tests/test_phase12.c $(LIB_OBJECTS) $(LDFLAGS)
 	$(CC) $(CFLAGS) -Itests -o $(BINDIR)/test_phase13 tests/test_phase13.c $(LIB_OBJECTS) $(LDFLAGS)
 	$(CC) $(CFLAGS) -Itests -o $(BINDIR)/test_packages tests/test_packages.c $(LIB_OBJECTS) $(LDFLAGS)
-	$(CC) $(CFLAGS) -Itests -o $(BINDIR)/test_rename_compat tests/test_rename_compat.c $(LIB_OBJECTS) $(LDFLAGS)
+	$(CC) $(CFLAGS) -Itests -o $(BINDIR)/test_naming tests/test_naming.c $(LIB_OBJECTS) $(LDFLAGS)
 	$(CC) $(CFLAGS) -Itests -o $(BINDIR)/test_custom_txn tests/test_custom_txn.c $(LIB_OBJECTS) $(LDFLAGS)
 	# The CLI with the pager's crash hook (AUSPEX_TEST_CRASH_AT), for test_journal.
 	$(CC) $(CFLAGS) -DAUSPEX_TEST_HOOKS -o $(BINDIR)/auspex_hooks$(EXE) $(SRCDIR)/pager.c $(filter-out $(OBJDIR)/pager.o,$(OBJECTS)) $(LDFLAGS)
@@ -120,7 +120,7 @@ endif
 	$(BINDIR)/test_phase12
 	$(BINDIR)/test_phase13
 	$(BINDIR)/test_packages
-	$(BINDIR)/test_rename_compat
+	$(BINDIR)/test_naming
 	$(BINDIR)/test_custom_txn
 	$(BINDIR)/test_journal
 ifeq ($(USE_SQLITE),1)
@@ -190,12 +190,10 @@ DESTDIR    ?=
 INSTALLBIN = $(DESTDIR)$(PREFIX)/bin
 INSTALLMAN = $(DESTDIR)$(PREFIX)/share/man/man1
 
-# `mypl` stays as a symlink for MyPL users until v0.4.0.
 install: $(TARGET) auspex.1
 	mkdir -p $(INSTALLBIN) $(INSTALLMAN)
 	cp $(TARGET) $(INSTALLBIN)/auspex
-	ln -sf auspex $(INSTALLBIN)/mypl
 	cp auspex.1 $(INSTALLMAN)/auspex.1
 
 uninstall:
-	rm -f $(INSTALLBIN)/auspex $(INSTALLBIN)/mypl $(INSTALLMAN)/auspex.1
+	rm -f $(INSTALLBIN)/auspex $(INSTALLMAN)/auspex.1

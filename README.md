@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/platform-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-blue.svg" alt="Platforms: Linux, macOS, Windows">
 </p>
 
-Auspex (*AW-speks*, formerly MyPL) is a small scripting language with C-like
+Auspex (*AW-speks*) is a small scripting language with C-like
 syntax and SQL in its veins.
 It compiles to bytecode for a custom stack VM and runs against either its
 built-in SQL engine or SQLite. Stored-procedure scripting without the weight
@@ -98,19 +98,6 @@ make clean && make && make test
 
 The Windows REPL uses the console API for history and in-line editing;
 piped input falls back to plain line reading.
-
-## Migrating from MyPL
-
-Auspex was called MyPL up to v0.1.0. Everything MyPL wrote keeps working
-through v0.3.x, with a one-line warning on stderr where a legacy name is used:
-
-| MyPL | Auspex | Until v0.4.0 |
-| --- | --- | --- |
-| `mypl` binary | `auspex` | `make install` also installs a `mypl` symlink |
-| `.mypl` sources | `.apx` | `.mypl` files still run (the extension is never checked) |
-| `mypl.db` (+ `.packages`/`.programs`) | `auspex.db` | used when only `mypl.db` exists; rename all three files to switch |
-| `_mypl_*` tables (SQLite) | `_auspex_*` | renamed automatically the first time the database is opened |
-| `MYPL_INDEX_DEBUG` | `AUSPEX_INDEX_DEBUG` | still read |
 
 ## Contributing
 
