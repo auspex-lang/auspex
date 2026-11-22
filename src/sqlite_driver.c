@@ -6,56 +6,6 @@
 #include "sqlite_driver.h"
 #include "compiler.h"
 
-/* MyPL named its meta tables _mypl_*. Renames them to _auspex_* the first
-   time such a database is opened (one transaction), warning once. Removed in
-   v0.4.0 together with the other Auspex compatibility paths. */
-static const char* const META_TABLES[] = {"packages", "sequences", "program_units"};
-
-static int table_exists(sqlite3* db, const char* name) {
-    sqlite3_stmt* st = NULL;
-    int found = 0;
-    if (sqlite3_prepare_v2(db, "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1",
-                           -1, &st, NULL) == SQLITE_OK) {
-        sqlite3_bind_text(st, 1, name, -1, SQLITE_STATIC);
-        found = sqlite3_step(st) == SQLITE_ROW;
-    }
-    sqlite3_finalize(st);
-    return found;
-}
-
-static int migrate_legacy_tables(sqlite3* db, const char* conn, char* error, size_t error_size) {
-    char sql[512];
-    size_t pos = 0;
-    int pending = 0;
-    for (size_t i = 0; i < sizeof(META_TABLES) / sizeof(META_TABLES[0]); i++) {
-        char legacy[64], current[64];
-        snprintf(legacy, sizeof(legacy), "_mypl_%s", META_TABLES[i]);
-        snprintf(current, sizeof(current), "_auspex_%s", META_TABLES[i]);
-        if (table_exists(db, legacy) && !table_exists(db, current)) {
-            pos += (size_t)snprintf(sql + pos, sizeof(sql) - pos,
-                                    "ALTER TABLE %s RENAME TO %s;", legacy, current);
-            pending++;
-        }
-    }
-    if (pending == 0) return 1;
-
-    char* err = NULL;
-    if (sqlite3_exec(db, "BEGIN", NULL, NULL, &err) != SQLITE_OK ||
-        sqlite3_exec(db, sql, NULL, NULL, &err) != SQLITE_OK ||
-        sqlite3_exec(db, "COMMIT", NULL, NULL, &err) != SQLITE_OK) {
-        snprintf(error, error_size,
-                 "could not rename legacy _mypl_* tables to _auspex_* in '%s' (%s); "
-                 "rename them manually with ALTER TABLE ... RENAME TO",
-                 conn != NULL ? conn : "", err != NULL ? err : "unknown error");
-        sqlite3_free(err);
-        sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
-        return 0;
-    }
-    fprintf(stderr, "auspex: renamed legacy _mypl_* tables to _auspex_* in '%s'\n",
-            conn != NULL ? conn : "");
-    return 1;
-}
-
 static int sqlite_open(DBDriver* driver, const char* conn) {
     SQLiteImpl* impl = calloc(1, sizeof(SQLiteImpl));
     if (impl == NULL) {
@@ -70,12 +20,6 @@ static int sqlite_open(DBDriver* driver, const char* conn) {
         return 0;
     }
     driver->impl = impl;
-    if (!migrate_legacy_tables(impl->db, conn, driver->error_message,
-                               sizeof(driver->error_message))) {
-        sqlite3_close(impl->db);
-        free(impl);
-        return 0;
-    }
     driver->error_message[0] = '\0';
     if (conn != NULL) {
         snprintf(driver->connection_string, sizeof(driver->connection_string), "%s", conn);

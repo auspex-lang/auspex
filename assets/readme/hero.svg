@@ -24,7 +24,7 @@
     <text x="0" y="252" class="sans" font-size="30" fill="#c9d1d9">A lightweight, open-source</text>
     <text x="0" y="292" class="sans" font-size="30" fill="#c9d1d9">alternative to PL/SQL.</text>
 
-    <text x="0" y="356" class="mono" font-size="18" fill="#6e7681">v0.2.0 · MIT · formerly MyPL</text>
+    <text x="0" y="356" class="mono" font-size="18" fill="#6e7681">v0.2.0 · MIT</text>
   </g>
 
   <!-- Project proof: the README's own loop and the output it really prints -->
