@@ -81,6 +81,10 @@ test: $(TARGET)
 	$(CC) $(CFLAGS) -Itests -o $(BINDIR)/test_phase13 tests/test_phase13.c $(LIB_OBJECTS) $(LDFLAGS)
 	$(CC) $(CFLAGS) -Itests -o $(BINDIR)/test_packages tests/test_packages.c $(LIB_OBJECTS) $(LDFLAGS)
 	$(CC) $(CFLAGS) -Itests -o $(BINDIR)/test_rename_compat tests/test_rename_compat.c $(LIB_OBJECTS) $(LDFLAGS)
+	$(CC) $(CFLAGS) -Itests -o $(BINDIR)/test_custom_txn tests/test_custom_txn.c $(LIB_OBJECTS) $(LDFLAGS)
+	# The CLI with the pager's crash hook (AUSPEX_TEST_CRASH_AT), for test_journal.
+	$(CC) $(CFLAGS) -DAUSPEX_TEST_HOOKS -o $(BINDIR)/auspex_hooks$(EXE) $(SRCDIR)/pager.c $(filter-out $(OBJDIR)/pager.o,$(OBJECTS)) $(LDFLAGS)
+	$(CC) $(CFLAGS) -Itests -o $(BINDIR)/test_journal tests/test_journal.c $(LIB_OBJECTS) $(LDFLAGS)
 ifeq ($(USE_SQLITE),1)
 	$(CC) $(CFLAGS) -Itests -o $(BINDIR)/test_phase1 tests/test_phase1.c $(LIB_OBJECTS) $(LDFLAGS)
 	$(CC) $(CFLAGS) -Itests -o $(BINDIR)/test_phase8 tests/test_phase8.c $(LIB_OBJECTS) $(LDFLAGS)
@@ -117,6 +121,8 @@ endif
 	$(BINDIR)/test_phase13
 	$(BINDIR)/test_packages
 	$(BINDIR)/test_rename_compat
+	$(BINDIR)/test_custom_txn
+	$(BINDIR)/test_journal
 ifeq ($(USE_SQLITE),1)
 	$(BINDIR)/test_phase1
 	$(BINDIR)/test_phase8

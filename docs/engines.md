@@ -53,6 +53,14 @@ Supported:
   read-only.
 - Sequences persist in the catalog (`create_sequence`, `nextval`, `currval`,
   `drop_sequence`).
+- Transactions: `begin`, `commit` and `rollback` work as on SQLite
+  (savepoints are not supported yet). Writes
+  outside an explicit transaction are batched into an implicit one that
+  commits when the program ends (or, in the REPL, after each input), and early
+  once it holds 2048 pages. A rollback undoes DDL and sequences too; the
+  `.packages`/`.programs` sidecar files are not transactional. Commits go
+  through a rollback journal (`<db>-journal`), so a crash mid-commit is undone
+  the next time the database opens.
 
 Known limitations (deliberate, documented):
 

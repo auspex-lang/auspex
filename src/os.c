@@ -192,6 +192,33 @@ int os_fsync(int fd) {
 #endif
 }
 
+int os_fsync_dir(const char* path) {
+    if (path == NULL) return -1;
+#ifdef _WIN32
+    /* NTFS makes directory entries durable on its own; there is no handle
+       to flush through the CRT. */
+    return 0;
+#else
+    const char* slash = strrchr(path, '/');
+    char dir[4096];
+    if (slash == NULL) {
+        snprintf(dir, sizeof(dir), ".");
+    } else if (slash == path) {
+        snprintf(dir, sizeof(dir), "/");
+    } else {
+        size_t len = (size_t)(slash - path);
+        if (len >= sizeof(dir)) return -1;
+        memcpy(dir, path, len);
+        dir[len] = '\0';
+    }
+    int fd = open(dir, O_RDONLY);
+    if (fd < 0) return -1;
+    int rc = fsync(fd) == 0 ? 0 : -1;
+    close(fd);
+    return rc;
+#endif
+}
+
 long os_getline(char** line, size_t* capacity, FILE* f) {
 #ifdef _WIN32
     if (*line == NULL || *capacity == 0) {

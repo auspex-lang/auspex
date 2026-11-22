@@ -23,6 +23,10 @@ int os_ftruncate(int fd, off_t length);
 /* Flushes a file's data to stable storage (fsync, or _commit on Windows);
    0 on success, -1 on failure. */
 int os_fsync(int fd);
+/* Makes the creation or removal of `path`'s directory entry durable by
+   fsyncing the directory that holds it. 0 on success, -1 on failure; always
+   0 on Windows, which has no such step. */
+int os_fsync_dir(const char* path);
 
 /* Reads a line of any length into *line (grown as needed, like POSIX
    getline): returns its length including the newline, or -1 at end of

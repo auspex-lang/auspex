@@ -196,6 +196,16 @@ struct DBDriver {
 
 void custom_driver_init(DBDriver* driver);
 
+/* Which transaction the custom driver has open: none, the implicit one it
+   opens at the first write (committed at close, flush_implicit, BEGIN, or
+   once it holds CUSTOM_IMPLICIT_MAX_DIRTY_PAGES pages), or an explicit one
+   from BEGIN. */
+#define CUSTOM_TXN_NONE     0
+#define CUSTOM_TXN_IMPLICIT 1
+#define CUSTOM_TXN_EXPLICIT 2
+#define CUSTOM_IMPLICIT_MAX_DIRTY_PAGES 2048
+int custom_driver_transaction_state(DBDriver* driver);
+
 /* Default custom-engine database: auspex.db, or MyPL's mypl.db (with a
    one-time deprecation warning on stderr) when only that one exists. The
    mypl.db fallback goes away in v0.4.0. */
@@ -215,6 +225,20 @@ int    pager_allocate_page(Pager* pager);
 void   pager_free_page(Pager* pager, int page_num);
 void   pager_read_page(Pager* pager, int page_num, uint8_t* out);
 void   pager_write_page(Pager* pager, int page_num, const uint8_t* data);
+
+/* Transactions (#113). While one is open, page writes and allocation
+   changes stay in memory: reads see them, the file does not. Commit writes
+   them out and fsyncs; rollback drops them. No nesting: begin returns 0 when
+   one is already open, commit returns 0 when none is or the write fails (the
+   transaction is then rolled back). With autobegin set, the first page
+   write, allocation or free opens one by itself. pager_close commits an
+   open transaction. */
+int    pager_begin(Pager* pager);
+int    pager_commit(Pager* pager);
+void   pager_rollback(Pager* pager);
+int    pager_in_transaction(Pager* pager);
+int    pager_dirty_count(Pager* pager);
+void   pager_set_autobegin(Pager* pager, int on);
 
 BTree* btree_create(Pager* pager);
 BTree* btree_open(Pager* pager, int root_page);
