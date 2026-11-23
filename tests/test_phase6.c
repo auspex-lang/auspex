@@ -288,6 +288,7 @@ TEST(phase6_reading_string_values_from_maps_exits_cleanly) {
         ASSERT_INT_EQ(1, strstr(out, expected[i]) != NULL);
     }
 }
+
 int main(void) {
     RUN_TEST(phase6_map_string_key_methods);
     RUN_TEST(phase6_map_int_key_methods);

@@ -1660,6 +1660,7 @@ TEST(compiler_int_overflow_is_catchable_with_sqlcode_1426) {
         &result));
     ASSERT_INT64_EQ(-1426, result);
 }
+
 int main(void) {
     RUN_TEST(compiler_compiles_integer_return);
     RUN_TEST(compiler_compiles_local_variables);

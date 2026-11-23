@@ -1236,6 +1236,7 @@ TEST(natives_nextval_past_the_int_range_is_an_overflow) {
     value_release(name[0]);
     vm_free(vm);
 }
+
 int main(void) {
     RUN_TEST(natives_finds_registered_functions);
     RUN_TEST(natives_length_returns_array_length);

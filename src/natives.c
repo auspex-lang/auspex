@@ -690,8 +690,7 @@ static int float_to_int_checked(VM* vm, const char* who, double rounded, Value* 
     return 1;
 }
 
-static int native_round(
-VM* vm, int argc, Value* argv, Value* out) {
+static int native_round(VM* vm, int argc, Value* argv, Value* out) {
     (void)vm;
     (void)argc;
     if (argv[0].type != VAL_FLOAT && argv[0].type != VAL_INT) {
