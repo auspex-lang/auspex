@@ -3622,6 +3622,9 @@ static int constraints_apply_row(Table* table, Cell* cells) {
    way of user names; it is an ordinary index otherwise. */
 #define IMPLICIT_INDEX_PREFIX "__unique_"
 
+/* Catalog-page bytes an implicit index leaves free for the user's own DDL. */
+#define IMPLICIT_INDEX_CATALOG_RESERVE 1024
+
 /* The index that serves the uniqueness check on `column`: any index on the
    column, user-made or implicit. When there is none, one is built from the
    stored rows (once: from then on inserts and row rewrites maintain it like
@@ -3638,6 +3641,16 @@ static TableIndex* constraint_index(Context* ctx, Table* table, int column) {
     char name[MAX_NAME_LEN + 1];
     snprintf(name, sizeof(name), "%s%.*s", IMPLICIT_INDEX_PREFIX,
              (int)(MAX_NAME_LEN - strlen(IMPLICIT_INDEX_PREFIX)), column_name);
+    /* The catalog is one page, and the user did not ask for this index, so
+       it is only made while the page has room for it plus a reserve: an
+       implicit index must never be what makes the catalog full, or what
+       stops a later CREATE TABLE / VIEW / INDEX that would have fit. Without
+       it the check scans, which is slower but exactly as correct. Checked
+       before the tree is built, so nothing is built only to be dropped. */
+    long record = 2 + (long)catalog_name_len(name) + (long)catalog_name_len(column_name) + 4;
+    if (catalog_encoded_size() + record > PAGE_SIZE - IMPLICIT_INDEX_CATALOG_RESERVE) {
+        return NULL;
+    }
     /* execute_create_index can fail only for lack of memory or pages, or
        because a user index already took the name: none of that is an error
        here, the check just scans instead. */
