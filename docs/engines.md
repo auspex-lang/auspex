@@ -41,7 +41,13 @@ Supported:
   all six comparison operators), `order by`, `limit`.
 - Three-valued NULL semantics: stored NULL cells, `IS [NOT] NULL`, aggregates
   skipping NULLs (`COUNT(*)` vs `COUNT(col)`).
-- Constraints: `primary key`, `unique`, `not null`, `default`.
+- Constraints: `primary key`, `unique`, `not null`, `default`. A `primary key`
+  or `unique` column is checked through an index on it: your own if you
+  created one, otherwise an implicit `__unique_<column>` index that the
+  engine builds the first time it needs it. It counts toward the table's 8
+  index slots (so a table with a primary key has 7 left for `create index`),
+  and it is only made while the catalog page keeps 1 KB free for your own
+  DDL. Without a free slot or that room, the check scans the table instead.
 - Indexes accelerate `where` terms that compare an indexed column to a
   literal; candidates are re-checked against the full WHERE, so results always
   match a full scan.

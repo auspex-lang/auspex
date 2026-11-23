@@ -2106,6 +2106,255 @@ TEST(sql_filtered_scan_returns_owned_copies_of_matching_rows) {
     cleanup(path);
 }
 
+/* ---- PRIMARY KEY / UNIQUE checks through an index (#106) --------------- */
+
+static int unique_rows(Context* ctx, const char* query) {
+    Result* res = sql_exec(query, ctx);
+    int n = res != NULL ? res->row_count : -1;
+    result_free(res);
+    return n;
+}
+
+TEST(sql_unique_checks_reject_duplicates_through_the_index) {
+    char* path = make_temp_path();
+    Context ctx = {path, NULL};
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl(
+        "CREATE TABLE u (id INT PRIMARY KEY, email STRING UNIQUE, score FLOAT UNIQUE)", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO u VALUES (1, 'a@x', 1.5)", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO u VALUES (2, 'b@x', 2.5)", &ctx));
+    ASSERT_INT_EQ(0, sql_exec_ddl("INSERT INTO u VALUES (1, 'c@x', 3.5)", &ctx));
+    ASSERT_INT_EQ(0, sql_exec_ddl("INSERT INTO u VALUES (3, 'b@x', 3.5)", &ctx));
+    ASSERT_INT_EQ(0, sql_exec_ddl("INSERT INTO u VALUES (3, 'c@x', 2.5)", &ctx));
+
+    /* NULL never conflicts, however often it appears. */
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO u VALUES (3, NULL, NULL)", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO u VALUES (4, NULL, NULL)", &ctx));
+
+    /* Index keys keep only 36 bytes of a string: two longer strings with the
+       same 36-byte prefix are different values, an exact repeat is not. */
+    const char* long_a = "a-very-long-address-that-shares-its-prefix-1@example.com";
+    const char* long_b = "a-very-long-address-that-shares-its-prefix-2@example.com";
+    char sql[256];
+    snprintf(sql, sizeof(sql), "INSERT INTO u VALUES (5, '%s', 5.5)", long_a);
+    ASSERT_INT_EQ(1, sql_exec_ddl(sql, &ctx));
+    snprintf(sql, sizeof(sql), "INSERT INTO u VALUES (6, '%s', 6.5)", long_b);
+    ASSERT_INT_EQ(1, sql_exec_ddl(sql, &ctx));
+    snprintf(sql, sizeof(sql), "INSERT INTO u VALUES (7, '%s', 7.5)", long_a);
+    ASSERT_INT_EQ(0, sql_exec_ddl(sql, &ctx));
+
+    /* 0.0 and -0.0 are equal values with different index keys. */
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO u VALUES (8, 'zero@x', 0.0)", &ctx));
+    Value neg_zero[1] = {value_float(-0.0)};
+    ASSERT_INT_EQ(0, sql_exec_ddl_params("INSERT INTO u VALUES (9, 'nz@x', ?)", &ctx, neg_zero, 1));
+    ASSERT_INT_EQ(7, unique_rows(&ctx, "SELECT id FROM u"));
+    catalog_close(&ctx);
+
+    /* The index is in the catalog: after a reopen it still enforces the
+       constraints and serves lookups. */
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    ASSERT_INT_EQ(0, sql_exec_ddl("INSERT INTO u VALUES (2, 'new@x', 9.5)", &ctx));
+    ASSERT_INT_EQ(0, sql_exec_ddl("INSERT INTO u VALUES (10, 'a@x', 9.5)", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO u VALUES (10, 'new@x', 9.5)", &ctx));
+    ASSERT_INT_EQ(1, unique_rows(&ctx, "SELECT id FROM u WHERE id = 10"));
+    catalog_close(&ctx);
+    cleanup(path);
+}
+
+TEST(sql_unique_check_matches_an_int_against_a_stored_float) {
+    /* INSERT ... SELECT copies cells as they are, so an int column can hold
+       a float; 2 and 2.0 are still the same value. */
+    char* path = make_temp_path();
+    Context ctx = {path, NULL};
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("CREATE TABLE src (id FLOAT)", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO src VALUES (2.0)", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("CREATE TABLE t (id INT PRIMARY KEY)", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO t SELECT id FROM src", &ctx));
+    ASSERT_INT_EQ(0, sql_exec_ddl("INSERT INTO t VALUES (2)", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO t VALUES (3)", &ctx));
+    catalog_close(&ctx);
+    cleanup(path);
+}
+
+TEST(sql_unique_check_survives_a_dropped_or_missing_index) {
+    char* path = make_temp_path();
+    Context ctx = {path, NULL};
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("CREATE TABLE t (id INT PRIMARY KEY, v INT)", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO t VALUES (1, 10)", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO t VALUES (2, 20)", &ctx));
+    /* Dropping the implicit index loses nothing: the next check builds it
+       again from the stored rows. */
+    ASSERT_INT_EQ(1, sql_exec_ddl("DROP INDEX __unique_id ON t", &ctx));
+    ASSERT_INT_EQ(0, sql_exec_ddl("INSERT INTO t VALUES (2, 30)", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO t VALUES (3, 30)", &ctx));
+    ASSERT_INT_EQ(0, sql_exec_ddl("INSERT INTO t VALUES (3, 40)", &ctx));
+
+    /* A table whose index slots are all taken falls back to scanning. */
+    ASSERT_INT_EQ(1, sql_exec_ddl(
+        "CREATE TABLE wide (a INT, b INT, c INT, d INT, e INT, f INT, g INT, h INT, k INT UNIQUE)",
+        &ctx));
+    static const char* const cols[] = {"a", "b", "c", "d", "e", "f", "g", "h"};
+    for (int i = 0; i < 8; i++) {
+        char sql[96];
+        snprintf(sql, sizeof(sql), "CREATE INDEX wide_%s ON wide (%s)", cols[i], cols[i]);
+        ASSERT_INT_EQ(1, sql_exec_ddl(sql, &ctx));
+    }
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO wide VALUES (1, 1, 1, 1, 1, 1, 1, 1, 7)", &ctx));
+    ASSERT_INT_EQ(0, sql_exec_ddl("INSERT INTO wide VALUES (2, 2, 2, 2, 2, 2, 2, 2, 7)", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("INSERT INTO wide VALUES (2, 2, 2, 2, 2, 2, 2, 2, 8)", &ctx));
+    catalog_close(&ctx);
+    cleanup(path);
+}
+
+TEST(sql_update_duplicate_check_sorts_the_row_set) {
+    char* path = make_temp_path();
+    Context ctx = {path, NULL};
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("CREATE TABLE t (id INT PRIMARY KEY, code STRING UNIQUE, n INT)", &ctx));
+    for (int i = 0; i < 300; i++) {
+        char sql[128];
+        if (i % 3 == 0) {
+            snprintf(sql, sizeof(sql), "INSERT INTO t VALUES (%d, NULL, %d)", i, i % 7);
+        } else {
+            snprintf(sql, sizeof(sql), "INSERT INTO t VALUES (%d, 'c%d', %d)", i, i, i % 7);
+        }
+        ASSERT_INT_EQ(1, sql_exec_ddl(sql, &ctx));
+    }
+    /* Distinct values (and any number of NULLs) pass. */
+    ASSERT_INT_EQ(1, sql_exec_ddl("UPDATE t SET n = 5 WHERE n = 6", &ctx));
+    ASSERT_INT_EQ(1, sql_exec_ddl("UPDATE t SET code = NULL WHERE n = 5", &ctx));
+    /* One value given to two rows is rejected, wherever in the set they are,
+       and nothing is written. */
+    ASSERT_INT_EQ(0, sql_exec_ddl("UPDATE t SET code = 'same' WHERE n = 4", &ctx));
+    ASSERT_INT_EQ(0, unique_rows(&ctx, "SELECT id FROM t WHERE code = 'same'"));
+    ASSERT_INT_EQ(0, sql_exec_ddl("UPDATE t SET code = 'c1' WHERE id = 298", &ctx));
+    ASSERT_INT_EQ(1, unique_rows(&ctx, "SELECT id FROM t WHERE code = 'c298'"));
+    ASSERT_INT_EQ(1, sql_exec_ddl("UPDATE t SET code = 'only' WHERE id = 1", &ctx));
+    ASSERT_INT_EQ(1, unique_rows(&ctx, "SELECT id FROM t WHERE code = 'only'"));
+    catalog_close(&ctx);
+    cleanup(path);
+}
+
+/* The implicit indexes behind PRIMARY KEY / UNIQUE are catalog records, made
+   by an INSERT rather than by DDL. Filling the one catalog page with them
+   used to overflow it on a plain INSERT, or make every later catalog write
+   fail and lose rows (review of #120). Each test creates the database in one
+   session, inserts in a second and counts in a third. */
+
+static void long_table_name(char* out, size_t size, int i) {
+    snprintf(out, size, "customer_orders_archive_table_%03d", i);
+}
+
+static int insert_one_row_per_table(const char* path, int tables) {
+    Context ctx = {path, NULL};
+    if (!catalog_open(&ctx)) return 0;
+    for (int i = 0; i < tables; i++) {
+        char name[64];
+        char sql[256];
+        long_table_name(name, sizeof(name), i);
+        snprintf(sql, sizeof(sql), "INSERT INTO %s VALUES (1, 'a', 1)", name);
+        if (!sql_exec_ddl(sql, &ctx)) {
+            catalog_close(&ctx);
+            return 0;
+        }
+    }
+    catalog_close(&ctx);
+    return 1;
+}
+
+static int rows_in_every_table(const char* path, int tables) {
+    Context ctx = {path, NULL};
+    if (!catalog_open(&ctx)) return -1;
+    int total = 0;
+    for (int i = 0; i < tables; i++) {
+        char name[64];
+        char sql[128];
+        long_table_name(name, sizeof(name), i);
+        snprintf(sql, sizeof(sql), "SELECT identifier FROM %s", name);
+        Result* res = sql_exec(sql, &ctx);
+        if (res != NULL && res->row_count == 1) total++;
+        result_free(res);
+    }
+    catalog_close(&ctx);
+    return total;
+}
+
+static int create_long_tables(Context* ctx, int tables) {
+    for (int i = 0; i < tables; i++) {
+        char name[64];
+        char sql[256];
+        long_table_name(name, sizeof(name), i);
+        snprintf(sql, sizeof(sql),
+                 "CREATE TABLE %s (identifier INT PRIMARY KEY, external_reference STRING UNIQUE, v INT)",
+                 name);
+        if (!sql_exec_ddl(sql, ctx)) return 0;
+    }
+    return 1;
+}
+
+TEST(sql_implicit_indexes_never_overfill_the_catalog) {
+    static const int sizes[] = {25, 30, 45};
+    for (int k = 0; k < 3; k++) {
+        int tables = sizes[k];
+        char* path = make_temp_path();
+        Context ctx = {path, NULL};
+        ASSERT_INT_EQ(1, catalog_open(&ctx));
+        ASSERT_INT_EQ(1, create_long_tables(&ctx, tables));
+        catalog_close(&ctx);
+
+        ASSERT_INT_EQ(1, insert_one_row_per_table(path, tables));
+        ASSERT_INT_EQ(tables, rows_in_every_table(path, tables));
+
+        /* Tables that got no index for lack of room still enforce their keys
+           (by scanning), and the page keeps room for the user's own DDL. */
+        ASSERT_INT_EQ(1, catalog_open(&ctx));
+        char name[64];
+        char sql[256];
+        long_table_name(name, sizeof(name), tables - 1);
+        snprintf(sql, sizeof(sql), "INSERT INTO %s VALUES (1, 'b', 2)", name);
+        ASSERT_INT_EQ(0, sql_exec_ddl(sql, &ctx));
+        snprintf(sql, sizeof(sql), "INSERT INTO %s VALUES (2, 'a', 2)", name);
+        ASSERT_INT_EQ(0, sql_exec_ddl(sql, &ctx));
+        ASSERT_INT_EQ(1, sql_exec_ddl("CREATE TABLE added_afterwards (a INT, b STRING)", &ctx));
+        catalog_close(&ctx);
+        cleanup(path);
+    }
+}
+
+TEST(sql_implicit_indexes_leave_views_and_rows_intact) {
+    char* path = make_temp_path();
+    Context ctx = {path, NULL};
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    ASSERT_INT_EQ(1, create_long_tables(&ctx, 20));
+    for (int i = 0; i < 6; i++) {
+        char sql[512];
+        snprintf(sql, sizeof(sql),
+                 "CREATE VIEW archive_view_%d AS SELECT identifier, external_reference, v "
+                 "FROM customer_orders_archive_table_%03d WHERE identifier > 0 AND v > 0 "
+                 "AND external_reference <> 'placeholder-value-that-pads-the-view-text' "
+                 "ORDER BY identifier LIMIT 100", i, i);
+        ASSERT_INT_EQ(1, sql_exec_ddl(sql, &ctx));
+    }
+    catalog_close(&ctx);
+
+    ASSERT_INT_EQ(1, insert_one_row_per_table(path, 20));
+    ASSERT_INT_EQ(20, rows_in_every_table(path, 20));
+
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    for (int i = 0; i < 6; i++) {
+        char sql[64];
+        snprintf(sql, sizeof(sql), "SELECT identifier FROM archive_view_%d", i);
+        Result* res = sql_exec(sql, &ctx);
+        ASSERT_PTR_NOT_NULL(res);
+        ASSERT_INT_EQ(1, res->row_count);
+        result_free(res);
+    }
+    catalog_close(&ctx);
+    cleanup(path);
+}
+
 int main(void) {
     RUN_TEST(sql_scan_returns_rows_from_full_middle_pages);
     RUN_TEST(sql_index_build_sees_rows_on_full_middle_pages);
@@ -2178,5 +2427,11 @@ int main(void) {
     RUN_TEST(sql_update_in_place_enforces_not_null);
     RUN_TEST(sql_delete_in_place_moves_index_entries_of_shifted_rows);
     RUN_TEST(sql_filtered_scan_returns_owned_copies_of_matching_rows);
+    RUN_TEST(sql_unique_checks_reject_duplicates_through_the_index);
+    RUN_TEST(sql_unique_check_matches_an_int_against_a_stored_float);
+    RUN_TEST(sql_unique_check_survives_a_dropped_or_missing_index);
+    RUN_TEST(sql_update_duplicate_check_sorts_the_row_set);
+    RUN_TEST(sql_implicit_indexes_never_overfill_the_catalog);
+    RUN_TEST(sql_implicit_indexes_leave_views_and_rows_intact);
     TEST_SUMMARY();
 }
