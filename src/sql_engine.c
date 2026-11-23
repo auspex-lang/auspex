@@ -3790,6 +3790,27 @@ static int constraints_check_new_row(Context* ctx, Table* table, Cell* cells) {
     return 1;
 }
 
+/* Whether cell_compare totally orders these (non-NULL) cells: all numbers
+   with no NaN, or all text. See constraints_check_row_set. */
+static int cells_sort_consistently(Cell** cells, int n) {
+    int numeric = 0;
+    int text = 0;
+    for (int i = 0; i < n; i++) {
+        int type = cells[i]->type;
+        if (type == VAL_INT || type == VAL_BOOL) {
+            numeric = 1;
+        } else if (type == VAL_FLOAT) {
+            if (isnan(cells[i]->as.as_float)) return 0;
+            numeric = 1;
+        } else if (cell_owns_text(type)) {
+            text = 1;
+        } else {
+            return 0;
+        }
+    }
+    return !(numeric && text);
+}
+
 /* qsort comparator over Cell pointers, ordering by cell_compare. */
 static int cell_ptr_compare(const void* a, const void* b) {
     return cell_compare(*(Cell* const*)a, *(Cell* const*)b);
@@ -3811,7 +3832,14 @@ static int constraints_check_row_set(Table* table, Row* rows, int row_count) {
         }
     }
     /* Duplicates in a column are found by sorting its non-NULL values and
-       comparing neighbours, O(n log n) instead of comparing every pair. */
+       comparing neighbours, O(n log n) instead of comparing every pair.
+       That needs cell_compare to be a consistent order, which it is for
+       numbers without NaN and for text, the two families a column normally
+       holds. It is not across them (a float against a string compares
+       equal) or for NaN (equal to everything), and qsort with an
+       inconsistent comparator is undefined; such a column, which only
+       INSERT ... SELECT can produce, keeps the pairwise comparison so its
+       result is exactly what it always was. */
     Cell** values = row_count > 0 ? malloc(sizeof(Cell*) * (size_t)row_count) : NULL;
     if (row_count > 0 && values == NULL) {
         snprintf(g_sql_ddl_error, sizeof(g_sql_ddl_error), "out of memory");
@@ -3825,15 +3853,25 @@ static int constraints_check_row_set(Table* table, Row* rows, int row_count) {
             Cell* v = &rows[i].fields[c].value;
             if (v->type != VAL_NULL) values[n++] = v;
         }
-        qsort(values, (size_t)n, sizeof(Cell*), cell_ptr_compare);
-        for (int i = 1; i < n; i++) {
-            if (cell_compare(values[i - 1], values[i]) == 0) {
-                snprintf(g_sql_ddl_error, sizeof(g_sql_ddl_error),
-                         "%s constraint violated: %s.%s",
-                         constraint_label(flags), table->name, table->columns[c].name);
-                free(values);
-                return 0;
+        int duplicate = 0;
+        if (cells_sort_consistently(values, n)) {
+            qsort(values, (size_t)n, sizeof(Cell*), cell_ptr_compare);
+            for (int i = 1; i < n && !duplicate; i++) {
+                duplicate = cell_compare(values[i - 1], values[i]) == 0;
             }
+        } else {
+            for (int i = 0; i < n && !duplicate; i++) {
+                for (int j = i + 1; j < n && !duplicate; j++) {
+                    duplicate = cell_compare(values[i], values[j]) == 0;
+                }
+            }
+        }
+        if (duplicate) {
+            snprintf(g_sql_ddl_error, sizeof(g_sql_ddl_error),
+                     "%s constraint violated: %s.%s",
+                     constraint_label(flags), table->name, table->columns[c].name);
+            free(values);
+            return 0;
         }
     }
     free(values);
