@@ -54,7 +54,7 @@ static int bind_params(DBDriver* driver, sqlite3_stmt* stmt, Value* params, int 
         int rc = SQLITE_OK;
         switch (v.type) {
             case VAL_INT:
-                rc = sqlite3_bind_int(stmt, idx, v.as.as_int);
+                rc = sqlite3_bind_int64(stmt, idx, (sqlite3_int64)v.as.as_int);
                 break;
             case VAL_FLOAT:
                 rc = sqlite3_bind_double(stmt, idx, v.as.as_float);
@@ -64,7 +64,7 @@ static int bind_params(DBDriver* driver, sqlite3_stmt* stmt, Value* params, int 
                     v.as.as_string ? v.as.as_string : "", -1, SQLITE_TRANSIENT);
                 break;
             case VAL_BOOL:
-                rc = sqlite3_bind_int(stmt, idx, v.as.as_int);
+                rc = sqlite3_bind_int(stmt, idx, v.as.as_int != 0);
                 break;
             case VAL_NULL:
                 rc = sqlite3_bind_null(stmt, idx);
@@ -374,7 +374,7 @@ static int sqlite_row_get_field(DBDriver* driver, void* row_handle, const char* 
             int type = sqlite3_column_type(stmt, i);
             switch (type) {
                 case SQLITE_INTEGER:
-                    *out = value_int(sqlite3_column_int(stmt, i));
+                    *out = value_int((int64_t)sqlite3_column_int64(stmt, i));
                     return 1;
                 case SQLITE_FLOAT:
                     *out = value_float(sqlite3_column_double(stmt, i));
@@ -436,7 +436,7 @@ static int sqlite_row_get_column(DBDriver* driver, void* row_handle, int index, 
                 *out = value_bool(sqlite3_column_int(stmt, index) != 0);
                 return 1;
             }
-            *out = value_int(sqlite3_column_int(stmt, index));
+            *out = value_int((int64_t)sqlite3_column_int64(stmt, index));
             return 1;
         case SQLITE_FLOAT:
             *out = value_float(sqlite3_column_double(stmt, index));
@@ -558,8 +558,8 @@ static int sqlite_sequence_load(DBDriver* driver, DBSequence* out, int max, int*
         const char* name = (const char*)sqlite3_column_text(stmt, 0);
         snprintf(out[count].name, sizeof(out[count].name), "%s", name != NULL ? name : "");
         out[count].has_value = sqlite3_column_int(stmt, 1);
-        out[count].current = sqlite3_column_int(stmt, 2);
-        out[count].increment = sqlite3_column_int(stmt, 3);
+        out[count].current = sqlite3_column_int64(stmt, 2);
+        out[count].increment = sqlite3_column_int64(stmt, 3);
         count++;
     }
     sqlite3_finalize(stmt);
@@ -584,8 +584,8 @@ static int sqlite_sequence_save(DBDriver* driver, const DBSequence* seq) {
     }
     sqlite3_bind_text(stmt, 1, seq->name, -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(stmt, 2, seq->has_value);
-    sqlite3_bind_int(stmt, 3, seq->current);
-    sqlite3_bind_int(stmt, 4, seq->increment);
+    sqlite3_bind_int64(stmt, 3, seq->current);
+    sqlite3_bind_int64(stmt, 4, seq->increment);
     int rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
     if (rc != SQLITE_DONE) {

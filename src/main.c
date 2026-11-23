@@ -268,7 +268,8 @@ int main(int argc, char** argv) {
     } else if (file != NULL) {  
         custom_driver_init(&driver);
         if (!driver.open(&driver, default_db_path())) {
-            fprintf(stderr, "Could not open database: %s\n", default_db_path());
+            fprintf(stderr, "Could not open database: %s\n",
+                    driver.error_message[0] != '\0' ? driver.error_message : default_db_path());
             return 1;
         }
         driver_open = 1;

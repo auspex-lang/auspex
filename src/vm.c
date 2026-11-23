@@ -1,3 +1,4 @@
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -38,11 +39,11 @@ typedef struct {
 } OutParamFrame;
 
 typedef struct {
-    int  used;
-    int  has_value;
-    int  current;
-    int  increment;
-    char name[SEQUENCE_NAME_MAX];
+    int     used;
+    int     has_value;
+    int64_t current;
+    int64_t increment;
+    char    name[SEQUENCE_NAME_MAX];
 } SequenceSlot;
 
 typedef struct {
@@ -593,13 +594,13 @@ static int dbms_sql_format_value(Value v, char* out, size_t out_size) {
             snprintf(out, out_size, "NULL");
             return 1;
         case VAL_INT:
-            snprintf(out, out_size, "%d", v.as.as_int);
+            snprintf(out, out_size, "%" PRId64, v.as.as_int);
             return 1;
         case VAL_FLOAT:
             snprintf(out, out_size, "%g", v.as.as_float);
             return 1;
         case VAL_BOOL:
-            snprintf(out, out_size, "%d", v.as.as_int ? 1 : 0);
+            snprintf(out, out_size, "%d", v.as.as_int != 0 ? 1 : 0);
             return 1;
         case VAL_STRING: {
             const char* s = v.as.as_string != NULL ? v.as.as_string : "";
@@ -983,7 +984,7 @@ static int sequence_persist_drop(VM* vm, const char* name) {
     return 1;
 }
 
-int vm_sequence_create(VM* vm, const char* name, int start, int increment) {
+int vm_sequence_create(VM* vm, const char* name, int64_t start, int64_t increment) {
     if (vm == NULL || name == NULL || name[0] == '\0') return 0;
     sequence_ensure_loaded(vm);
     if (sequence_find(vm, name) != NULL) return 0;
@@ -1006,15 +1007,19 @@ int vm_sequence_create(VM* vm, const char* name, int start, int increment) {
     return 0;
 }
 
-int vm_sequence_nextval(VM* vm, const char* name, int* out) {
+int vm_sequence_nextval(VM* vm, const char* name, int64_t* out) {
     if (vm == NULL || name == NULL || out == NULL) return 0;
     sequence_ensure_loaded(vm);
     SequenceSlot* slot = sequence_find(vm, name);
     if (slot == NULL) return 0;
     int old_has_value = slot->has_value;
-    int old_current = slot->current;
+    int64_t old_current = slot->current;
     if (slot->has_value) {
-        slot->current += slot->increment;
+        int64_t next;
+        if (!int64_add_checked(slot->current, slot->increment, &next)) {
+            return -1; /* the next value does not fit; the sequence is unchanged */
+        }
+        slot->current = next;
     } else {
         slot->has_value = 1;
     }
@@ -1027,7 +1032,7 @@ int vm_sequence_nextval(VM* vm, const char* name, int* out) {
     return 1;
 }
 
-int vm_sequence_currval(VM* vm, const char* name, int* out) {
+int vm_sequence_currval(VM* vm, const char* name, int64_t* out) {
     if (vm == NULL || name == NULL || out == NULL) return 0;
     sequence_ensure_loaded(vm);
     SequenceSlot* slot = sequence_find(vm, name);
@@ -1210,6 +1215,34 @@ static int pop(VM* vm, Value* out) {
     }
     vm->stack_top--;
     *out = *vm->stack_top;
+    return 1;
+}
+
+/* SQLCODE of a numeric overflow, after Oracle's ORA-01426. */
+#define SQLCODE_NUMERIC_OVERFLOW (-1426)
+
+static void set_numeric_overflow(VM* vm) {
+    set_runtime_error_ex(vm, "numeric overflow", SQLCODE_NUMERIC_OVERFLOW);
+}
+
+/* int OP int on the top two stack values, with overflow detection. Returns 1
+   when it replaced them with the result, 0 when they are not both ints (stack
+   untouched, the generic Value path applies), or -1 on overflow (operands
+   popped, error set; the caller THROWs). Ints own no memory, so nothing needs
+   releasing. */
+static int int_arith(VM* vm, int (*op)(int64_t, int64_t, int64_t*)) {
+    if (vm->stack_top - vm->stack < 2) return 0;
+    Value* a = vm->stack_top - 2;
+    Value* b = vm->stack_top - 1;
+    if (a->type != VAL_INT || b->type != VAL_INT) return 0;
+    int64_t result;
+    if (!op(a->as.as_int, b->as.as_int, &result)) {
+        vm->stack_top -= 2;
+        set_numeric_overflow(vm);
+        return -1;
+    }
+    a->as.as_int = result;
+    vm->stack_top--;
     return 1;
 }
 
@@ -1607,7 +1640,7 @@ static const char* sql_find_where(const char* sql) {
 /* A row snapshot for the SQLite row-trigger path: the rowid plus the row's
    columns materialized as a RowObj. */
 typedef struct {
-    int     rowid;
+    int64_t rowid;
     RowObj* row;
 } TriggerRowImage;
 
@@ -1644,7 +1677,7 @@ static int vm_select_row_images(VM* vm, const char* query,
             images = grown;
         }
         Value rowid_value;
-        int rowid = 0;
+        int64_t rowid = 0;
         if (driver->row_get_column(driver, row_handle, 0, &rowid_value) &&
             rowid_value.type == VAL_INT) {
             rowid = rowid_value.as.as_int;
@@ -1675,7 +1708,7 @@ static int vm_select_row_images(VM* vm, const char* query,
 }
 
 /* Runs a query expected to produce a single int (e.g. MAX(rowid)). */
-static int vm_query_scalar_int(VM* vm, const char* query, int* out) {
+static int vm_query_scalar_int(VM* vm, const char* query, int64_t* out) {
     DBDriver* driver = vm->driver;
     void* handle = NULL;
     if (!driver->query(driver, query, NULL, 0, &handle)) return 0;
@@ -1688,7 +1721,7 @@ static int vm_query_scalar_int(VM* vm, const char* query, int* out) {
                 *out = v.as.as_int;
                 ok = 1;
             } else if (v.type == VAL_FLOAT) {
-                *out = (int)v.as.as_float;
+                *out = (int64_t)v.as.as_float;
                 ok = 1;
             }
         }
@@ -1733,7 +1766,7 @@ static int vm_sqlite_exec_row_triggers(VM* vm, const char* sql, int event,
         char scalar_query[320];
         snprintf(scalar_query, sizeof(scalar_query),
                  "SELECT COALESCE(MAX(rowid), 0) FROM %s", table);
-        int before_max = 0;
+        int64_t before_max = 0;
         if (!vm_query_scalar_int(vm, scalar_query, &before_max)) {
             set_runtime_error_from_driver_sql(vm, "row trigger pre-select failed");
             return -1;
@@ -1746,7 +1779,7 @@ static int vm_sqlite_exec_row_triggers(VM* vm, const char* sql, int event,
             set_runtime_error(vm, "Out of memory");
             return -1;
         }
-        snprintf(query, qlen, "SELECT rowid, * FROM %s WHERE rowid > %d", table, before_max);
+        snprintf(query, qlen, "SELECT rowid, * FROM %s WHERE rowid > %" PRId64, table, before_max);
         TriggerRowImage* images = NULL;
         int count = 0;
         if (!vm_select_row_images(vm, query, &images, &count)) {
@@ -1795,7 +1828,7 @@ static int vm_sqlite_exec_row_triggers(VM* vm, const char* sql, int event,
         if (event == TRIGGER_UPDATE) {
             char new_query[320];
             snprintf(new_query, sizeof(new_query),
-                     "SELECT rowid, * FROM %s WHERE rowid = %d", table, olds[i].rowid);
+                     "SELECT rowid, * FROM %s WHERE rowid = %" PRId64, table, olds[i].rowid);
             TriggerRowImage* news = NULL;
             int new_count = 0;
             if (!vm_select_row_images(vm, new_query, &news, &new_count)) {
@@ -2132,18 +2165,33 @@ dispatch:
                 DISPATCH();
             }
             CASE(OP_ADD): {
-                if (!binary_op(vm, value_add)) return INTERPRET_RUNTIME_ERROR;
+                int handled = int_arith(vm, int64_add_checked);
+                if (handled < 0) THROW(vm);
+                if (handled == 0 && !binary_op(vm, value_add)) return INTERPRET_RUNTIME_ERROR;
                 DISPATCH();
             }
             CASE(OP_SUB): {
-                if (!binary_op(vm, value_sub)) return INTERPRET_RUNTIME_ERROR;
+                int handled = int_arith(vm, int64_sub_checked);
+                if (handled < 0) THROW(vm);
+                if (handled == 0 && !binary_op(vm, value_sub)) return INTERPRET_RUNTIME_ERROR;
                 DISPATCH();
             }
             CASE(OP_MUL): {
-                if (!binary_op(vm, value_mul)) return INTERPRET_RUNTIME_ERROR;
+                int handled = int_arith(vm, int64_mul_checked);
+                if (handled < 0) THROW(vm);
+                if (handled == 0 && !binary_op(vm, value_mul)) return INTERPRET_RUNTIME_ERROR;
                 DISPATCH();
             }
             CASE(OP_DIV): {
+                /* The one int quotient that does not fit: INT64_MIN / -1
+                   (which also traps on x86 rather than wrapping). */
+                if (vm->stack_top - vm->stack >= 2 &&
+                    vm->stack_top[-2].type == VAL_INT && vm->stack_top[-1].type == VAL_INT &&
+                    vm->stack_top[-2].as.as_int == INT64_MIN && vm->stack_top[-1].as.as_int == -1) {
+                    vm->stack_top -= 2;
+                    set_numeric_overflow(vm);
+                    THROW(vm);
+                }
                 if (!binary_op(vm, value_div)) return INTERPRET_RUNTIME_ERROR;
                 DISPATCH();
             }
@@ -2166,6 +2214,10 @@ dispatch:
                 if (value.type == VAL_FLOAT) {
                     ok = push(vm, value_float(-value.as.as_float));
                 } else if (value.type == VAL_INT) {
+                    if (value.as.as_int == INT64_MIN) {
+                        set_numeric_overflow(vm);
+                        THROW(vm);
+                    }
                     ok = push(vm, value_int(-value.as.as_int));
                 } else if (value.type == VAL_NULL) {
                     ok = push(vm, value_null());
@@ -2689,14 +2741,14 @@ dispatch:
                 if (!pop(vm, &idx_val)) return INTERPRET_RUNTIME_ERROR;
                 if (!pop(vm, &arr_val)) return INTERPRET_RUNTIME_ERROR;
                 if (arr_val.type == VAL_ARRAY && idx_val.type == VAL_INT) {
-                    int idx = idx_val.as.as_int;
+                    int64_t idx = idx_val.as.as_int;
                     if (idx < 0 || idx >= array_length(arr_val.as.as_array)) {
                         value_release(idx_val);
                         value_release(arr_val);
                         set_runtime_error(vm, "Array index out of bounds");
                         THROW(vm);
                     }
-                    Value result = array_get(arr_val.as.as_array, idx);
+                    Value result = array_get(arr_val.as.as_array, (int)idx);
                     value_retain(result);
                     if (!push(vm, result)) {
                         value_release(result);
@@ -2761,7 +2813,7 @@ dispatch:
                 if (!pop(vm, &idx_val)) return INTERPRET_RUNTIME_ERROR;
                 if (!pop(vm, &arr_val)) return INTERPRET_RUNTIME_ERROR;
                 if (arr_val.type == VAL_ARRAY && idx_val.type == VAL_INT) {
-                    int idx = idx_val.as.as_int;
+                    int64_t idx = idx_val.as.as_int;
                     if (idx < 0 || idx >= array_length(arr_val.as.as_array)) {
                         value_release(val);
                         value_release(idx_val);
@@ -2769,7 +2821,7 @@ dispatch:
                         set_runtime_error(vm, "Array index out of bounds");
                         THROW(vm);
                     }
-                    array_set(arr_val.as.as_array, idx, val);
+                    array_set(arr_val.as.as_array, (int)idx, val);
                     value_release(val);
                     value_release(idx_val);
                     value_release(arr_val);

@@ -1,6 +1,7 @@
 #ifndef MYDB_COMPILER_H
 #define MYDB_COMPILER_H
 
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -140,7 +141,7 @@ typedef enum {
 typedef struct {
     int type;
     union {
-        int       as_int;
+        int64_t   as_int;    /* int (64-bit); bool as 0 or 1 */
         double    as_float;
         char*     as_string;
         void*     as_row_handle;
@@ -218,11 +219,59 @@ void   write_chunk_u16(Chunk* chunk, uint16_t value);
 void   write_chunk_u16_line(Chunk* chunk, uint16_t value, int line, int column);
 uint16_t read_u16(const uint8_t* bytes);
 
-Value value_int(int v);
+Value value_int(int64_t v);
 Value value_null(void);
 Value value_float(double v);
 Value value_string(char* s);
 Value value_bool(int v);
+
+/* An int value narrowed to a C int, for sizes, indexes, counts and handles.
+   Out-of-range values saturate to INT_MIN / INT_MAX, so a bounds check
+   rejects them instead of seeing a wrapped number that happens to be in
+   range. */
+static inline int value_int_clamp(int64_t v) {
+    if (v < INT_MIN) return INT_MIN;
+    if (v > INT_MAX) return INT_MAX;
+    return (int)v;
+}
+
+/* Overflow-checked int arithmetic: store the result and return 1, or return
+   0 when it does not fit 64 bits (signed overflow is undefined in C). On
+   overflow *out may hold a wrapped value, so do not pass the operand you are
+   updating. GCC and
+   Clang have builtins for it; the portable versions are used elsewhere, or
+   when AUSPEX_PORTABLE_OVERFLOW is defined (to test them). */
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(AUSPEX_PORTABLE_OVERFLOW)
+static inline int int64_add_checked(int64_t a, int64_t b, int64_t* out) {
+    return !__builtin_add_overflow(a, b, out);
+}
+static inline int int64_sub_checked(int64_t a, int64_t b, int64_t* out) {
+    return !__builtin_sub_overflow(a, b, out);
+}
+static inline int int64_mul_checked(int64_t a, int64_t b, int64_t* out) {
+    return !__builtin_mul_overflow(a, b, out);
+}
+#else
+static inline int int64_add_checked(int64_t a, int64_t b, int64_t* out) {
+    if ((b > 0 && a > INT64_MAX - b) || (b < 0 && a < INT64_MIN - b)) return 0;
+    *out = a + b;
+    return 1;
+}
+static inline int int64_sub_checked(int64_t a, int64_t b, int64_t* out) {
+    if ((b < 0 && a > INT64_MAX + b) || (b > 0 && a < INT64_MIN + b)) return 0;
+    *out = a - b;
+    return 1;
+}
+static inline int int64_mul_checked(int64_t a, int64_t b, int64_t* out) {
+    if (a > 0) {
+        if (b > 0 ? a > INT64_MAX / b : b < INT64_MIN / a) return 0;
+    } else if (a < 0) {
+        if (b > 0 ? a < INT64_MIN / b : (b != 0 && a < INT64_MAX / b)) return 0;
+    }
+    *out = a * b;
+    return 1;
+}
+#endif
 Value value_date(char* s);
 Value value_timestamp(char* s);
 Value value_array(ArrayObj* array);

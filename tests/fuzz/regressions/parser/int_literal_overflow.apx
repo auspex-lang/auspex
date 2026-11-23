@@ -1,4 +1,4 @@
 proc main() -> int {
-    int x = 99999999999;
+    int x = 99999999999999999999;
     return 0;
 }

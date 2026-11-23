@@ -1,4 +1,5 @@
 #include <ctype.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -696,7 +697,11 @@ static void repl_session_init(ReplSession* session, const char* db_path) {
         fprintf(stderr, "SQLite support is disabled in this build\n");
 #endif
     } else {
-        catalog_open(&session->ctx);
+        if (!catalog_open(&session->ctx)) {
+            const char* why = sql_last_error();
+            fprintf(stderr, "Could not open database: %s\n",
+                    why[0] != '\0' ? why : session->ctx.db_path);
+        }
         if (session->vm != NULL) {
             vm_set_context(session->vm, &session->ctx);
         }
@@ -1311,7 +1316,7 @@ static void cmd_sql(ReplSession* session, const char* query) {
                 printf("%s = ", row->fields[i].name);
                 Cell c = row->fields[i].value;
                 switch (c.type) {
-                    case VAL_INT: printf("%d", c.as.as_int); break;
+                    case VAL_INT: printf("%" PRId64, c.as.as_int); break;
                     case VAL_FLOAT: printf("%g", c.as.as_float); break;
                     case VAL_STRING: printf("%s", c.as.as_string ? c.as.as_string : ""); break;
                     default: printf("?"); break;
@@ -1517,7 +1522,7 @@ static void cmd_count(ReplSession* session, const char* table_name) {
             return;
         }
         void* row = NULL;
-        int n = 0;
+        int64_t n = 0;
         if (session->driver.result_next(&session->driver, result, &row)) {
             Value v;
             if (session->driver.row_get_column(&session->driver, row, 0, &v)) {
@@ -1525,7 +1530,7 @@ static void cmd_count(ReplSession* session, const char* table_name) {
                 value_release(v);
             }
         }
-        printf("%s: %d rows\n", table_name, n);
+        printf("%s: %" PRId64 " rows\n", table_name, n);
         session->driver.result_free(&session->driver, result);
         return;
     }
@@ -1534,7 +1539,7 @@ static void cmd_count(ReplSession* session, const char* table_name) {
     char query[512];
     snprintf(query, sizeof(query), "SELECT count(*) FROM %.400s", table_name);
     Result* res = sql_exec(query, &session->ctx);
-    int n = 0;
+    int64_t n = 0;
     if (res != NULL) {
         Row* row = result_next(res);
         if (row != NULL && row->field_count > 0) {
@@ -1543,7 +1548,7 @@ static void cmd_count(ReplSession* session, const char* table_name) {
         }
         result_free(res);
     }
-    printf("%s: %d rows\n", table_name, n);
+    printf("%s: %" PRId64 " rows\n", table_name, n);
 }
 
 static void cmd_indexes(ReplSession* session, const char* table_name) {

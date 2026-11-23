@@ -276,6 +276,7 @@ TEST(gc_map_accessors_give_the_caller_its_own_reference) {
     value_release(m);
     vm_free(vm);
 }
+
 int main(void) {
     RUN_TEST(gc_string_starts_with_ref_count_one);
     RUN_TEST(gc_array_starts_with_ref_count_one);

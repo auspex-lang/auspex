@@ -1,3 +1,4 @@
+#include <inttypes.h>
 #include <stdio.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -288,7 +289,7 @@ static StringObj* string_obj_from_chars(const char* chars) {
     return (StringObj*)(chars - offsetof(StringObj, chars));
 }
 
-Value value_int(int v) {
+Value value_int(int64_t v) {
     Value value;
     value.type = VAL_INT;
     value.as.as_int = v;
@@ -517,7 +518,9 @@ Value value_add(Value a, Value b) {
         return value_float(as_number(a) + as_number(b));
     }
     if (a.type == VAL_INT && b.type == VAL_INT) {
-        return value_int(a.as.as_int + b.as.as_int);
+        /* The VM checks int overflow before it gets here (numeric overflow
+           error); computing in unsigned keeps any other caller defined. */
+        return value_int((int64_t)((uint64_t)a.as.as_int + (uint64_t)b.as.as_int));
     }
     return value_int(0);
 }
@@ -528,7 +531,7 @@ Value value_sub(Value a, Value b) {
         return value_float(as_number(a) - as_number(b));
     }
     if (a.type == VAL_INT && b.type == VAL_INT) {
-        return value_int(a.as.as_int - b.as.as_int);
+        return value_int((int64_t)((uint64_t)a.as.as_int - (uint64_t)b.as.as_int));
     }
     return value_int(0);
 }
@@ -539,7 +542,7 @@ Value value_mul(Value a, Value b) {
         return value_float(as_number(a) * as_number(b));
     }
     if (a.type == VAL_INT && b.type == VAL_INT) {
-        return value_int(a.as.as_int * b.as.as_int);
+        return value_int((int64_t)((uint64_t)a.as.as_int * (uint64_t)b.as.as_int));
     }
     return value_int(0);
 }
@@ -553,6 +556,8 @@ Value value_div(Value a, Value b) {
     }
     if (a.type == VAL_INT && b.type == VAL_INT) {
         if (b.as.as_int == 0) return value_int(0);
+        /* INT64_MIN / -1 traps on x86; the VM reports it as an overflow. */
+        if (b.as.as_int == -1) return value_int((int64_t)(0u - (uint64_t)a.as.as_int));
         return value_int(a.as.as_int / b.as.as_int);
     }
     return value_int(0);
@@ -657,7 +662,7 @@ void value_print(Value value) {
             printf("null");
             break;
         case VAL_INT:
-            printf("%d", value.as.as_int);
+            printf("%" PRId64, value.as.as_int);
             break;
         case VAL_FLOAT:
             printf("%g", value.as.as_float);
@@ -998,7 +1003,9 @@ int map_count(MapObj* map) {
 
 static int map_key_compare(Value a, Value b) {
     if (a.type == VAL_INT && b.type == VAL_INT) {
-        return a.as.as_int - b.as.as_int;
+        /* Compared, not subtracted: the difference of two 64-bit keys
+           need not fit the int result. */
+        return (a.as.as_int > b.as.as_int) - (a.as.as_int < b.as.as_int);
     }
     if (a.type == VAL_STRING && b.type == VAL_STRING) {
         const char* as = a.as.as_string ? a.as.as_string : "";
