@@ -2124,9 +2124,9 @@ TEST(sql_filtered_scan_returns_owned_copies_of_matching_rows) {
    INT32_MIN, -5, 1, 3 and INT32_MAX, indexes on id, name and flag, and
    sequence nums_seq (current 41, increment 2). Opening a database upgrades it
    in place, so the tests work on a copy. */
-static char* copy_v6_fixture(void) {
+static char* copy_fixture(const char* fixture) {
     char* path = make_temp_path();
-    FILE* in = fopen("tests/data/catalog_v6_int32.db", "rb");
+    FILE* in = fopen(fixture, "rb");
     FILE* out = fopen(path, "wb");
     if (in == NULL || out == NULL) {
         if (in != NULL) fclose(in);
@@ -2140,6 +2140,10 @@ static char* copy_v6_fixture(void) {
     fclose(in);
     fclose(out);
     return path;
+}
+
+static char* copy_v6_fixture(void) {
+    return copy_fixture("tests/data/catalog_v6_int32.db");
 }
 
 static uint32_t catalog_magic_on_disk(const char* path) {
@@ -2270,6 +2274,99 @@ TEST(sql_sequences_persist_64_bit_values) {
     cleanup(path);
 }
 
+/* tests/data/catalog_v6_float_index.db (written by the V6 engine): table t
+   (x FLOAT, s STRING, n INT) with an index on x and the rows (2, 'a', 1),
+   (3.5, 'b', 2), (7, 'c', 2147483647). The int literals 2 and 7 are stored as
+   ints in the float column, so the float column's index holds int keys in
+   the old 32-bit encoding. Rebuilding only int and bool indexes on upgrade
+   left them there, and `x = 2` found nothing afterwards (review of #117). */
+TEST(sql_v6_upgrade_rebuilds_an_index_on_a_float_column_holding_ints) {
+    char* path = copy_fixture("tests/data/catalog_v6_float_index.db");
+    ASSERT_PTR_NOT_NULL(path);
+    Context ctx = {path, NULL};
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    ASSERT_INT_EQ(0x4D595637, (int)catalog_magic_on_disk(path)); /* "MYV7" */
+    ASSERT_INT_EQ(1, count_rows(&ctx, "SELECT s FROM t WHERE x = 2"));
+    ASSERT_INT_EQ(1, count_rows(&ctx, "SELECT s FROM t WHERE x = 7"));
+    ASSERT_INT_EQ(1, count_rows(&ctx, "SELECT s FROM t WHERE x = 3.5"));
+    ASSERT_INT_EQ(3, count_rows(&ctx, "SELECT s FROM t WHERE x > 1"));
+    ASSERT_INT_EQ(1, count_rows(&ctx, "SELECT s FROM t WHERE x < 3"));
+    ASSERT_INT_EQ(1, count_rows(&ctx, "SELECT s FROM t WHERE n = 2147483647"));
+    catalog_close(&ctx);
+
+    /* And still after a reopen of the now-V7 file. */
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    ASSERT_INT_EQ(1, count_rows(&ctx, "SELECT s FROM t WHERE x = 7"));
+    catalog_close(&ctx);
+    cleanup(path);
+}
+
+/* catalog_v6_near_full.db and catalog_v6_too_full.db: 28 tables with an int
+   DEFAULT, 16 sequences and padding views, filling the V6 catalog page to
+   3816 and 3896 bytes. V7 widens each int DEFAULT by 4 bytes and each
+   sequence by 8 (240 bytes here), so the first still fits and the second
+   would not. */
+TEST(sql_v6_near_full_catalog_upgrades) {
+    char* path = copy_fixture("tests/data/catalog_v6_near_full.db");
+    ASSERT_PTR_NOT_NULL(path);
+    Context ctx = {path, NULL};
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    ASSERT_INT_EQ(0x4D595637, (int)catalog_magic_on_disk(path));
+    ASSERT_INT_EQ(2, count_rows(&ctx, "SELECT entry_identifier FROM ledger_entries_for_region_number_000"));
+    ASSERT_INT_EQ(1, count_rows(&ctx,
+        "SELECT memo FROM ledger_entries_for_region_number_000 WHERE amount_in_cents = 100"));
+    DBSequence seqs[16];
+    ASSERT_INT_EQ(16, catalog_sequence_list(&ctx, seqs, 16));
+    ASSERT_STRING_EQ("ledger_sequence_15", seqs[15].name);
+    ASSERT_INT64_EQ(1015, seqs[15].current);
+    catalog_close(&ctx);
+
+    ASSERT_INT_EQ(1, catalog_open(&ctx));
+    ASSERT_INT_EQ(16, catalog_sequence_list(&ctx, seqs, 16));
+    ASSERT_INT_EQ(1, count_rows(&ctx,
+        "SELECT entry_identifier FROM ledger_entries_for_region_number_000 WHERE entry_identifier = 2"));
+    catalog_close(&ctx);
+    cleanup(path);
+}
+
+static int same_file_contents(const char* a, const char* b) {
+    FILE* fa = fopen(a, "rb");
+    FILE* fb = fopen(b, "rb");
+    int same = fa != NULL && fb != NULL;
+    while (same) {
+        int ca = fgetc(fa);
+        int cb = fgetc(fb);
+        if (ca != cb) same = 0;
+        if (ca == EOF || cb == EOF) break;
+    }
+    if (fa != NULL) fclose(fa);
+    if (fb != NULL) fclose(fb);
+    return same;
+}
+
+TEST(sql_v6_catalog_too_full_for_v7_fails_cleanly_and_stays_v6) {
+    const char* fixture = "tests/data/catalog_v6_too_full.db";
+    char* path = copy_fixture(fixture);
+    ASSERT_PTR_NOT_NULL(path);
+    Context ctx = {path, NULL};
+    ASSERT_INT_EQ(0, catalog_open(&ctx));
+    ASSERT_PTR_NULL(ctx.pager);
+    ASSERT_PTR_NOT_NULL(strstr(sql_last_error(), "cannot upgrade"));
+    ASSERT_PTR_NOT_NULL(strstr(sql_last_error(), "the file is unchanged"));
+    /* Not a byte has changed: the file is still the V6 database. */
+    ASSERT_INT_EQ(1, same_file_contents(fixture, path));
+    ASSERT_INT_EQ(0x4D595636, (int)catalog_magic_on_disk(path)); /* "MYV6" */
+
+    /* Opening through the driver reports the same reason, and leaves the
+       file alone as well. */
+    DBDriver driver;
+    custom_driver_init(&driver);
+    ASSERT_INT_EQ(0, driver.open(&driver, path));
+    ASSERT_PTR_NOT_NULL(strstr(driver.error_message, "cannot upgrade"));
+    ASSERT_INT_EQ(1, same_file_contents(fixture, path));
+    cleanup(path);
+}
+
 int main(void) {
     RUN_TEST(sql_scan_returns_rows_from_full_middle_pages);
     RUN_TEST(sql_index_build_sees_rows_on_full_middle_pages);
@@ -2346,5 +2443,8 @@ int main(void) {
     RUN_TEST(sql_v6_database_takes_64_bit_rows_after_upgrade);
     RUN_TEST(sql_int_cells_and_keys_are_64_bit);
     RUN_TEST(sql_sequences_persist_64_bit_values);
+    RUN_TEST(sql_v6_upgrade_rebuilds_an_index_on_a_float_column_holding_ints);
+    RUN_TEST(sql_v6_near_full_catalog_upgrades);
+    RUN_TEST(sql_v6_catalog_too_full_for_v7_fails_cleanly_and_stays_v6);
     TEST_SUMMARY();
 }

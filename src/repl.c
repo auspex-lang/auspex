@@ -697,7 +697,11 @@ static void repl_session_init(ReplSession* session, const char* db_path) {
         fprintf(stderr, "SQLite support is disabled in this build\n");
 #endif
     } else {
-        catalog_open(&session->ctx);
+        if (!catalog_open(&session->ctx)) {
+            const char* why = sql_last_error();
+            fprintf(stderr, "Could not open database: %s\n",
+                    why[0] != '\0' ? why : session->ctx.db_path);
+        }
         if (session->vm != NULL) {
             vm_set_context(session->vm, &session->ctx);
         }

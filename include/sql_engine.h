@@ -120,6 +120,9 @@ int         sql_cell_to_value(const Cell* cell, Value* out);
 /* SQL execution */
 Result* sql_exec(const char* query, Context* ctx);
 int     sql_exec_ddl(const char* query, Context* ctx);
+/* Why the last catalog_open, DDL or DML statement failed ("" if it did not
+   say). Valid until the next engine call. */
+const char* sql_last_error(void);
 
 /* Same, with bind values for the statement's `?` placeholders, in order of
    appearance: the first `?` takes params[0], and so on. The number of

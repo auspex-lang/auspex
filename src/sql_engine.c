@@ -33,6 +33,10 @@ static int    g_catalog_version = 0;
    runtime error message can name the violated constraint. */
 static char g_sql_ddl_error[256];
 
+const char* sql_last_error(void) {
+    return g_sql_ddl_error;
+}
+
 typedef struct {
     char* name;
     char* select_query;
@@ -561,7 +565,7 @@ static long catalog_encoded_size(void) {
     }
     size += 1; /* sequence count */
     for (int i = 0; i < g_sequence_count; i++) {
-        size += 10 + (long)strlen(g_sequences[i].name);
+        size += 18 + (long)strlen(g_sequences[i].name); /* V7: i64 current, increment */
     }
     return size;
 }
@@ -700,6 +704,7 @@ static int catalog_upgrade_int64(Context* ctx);
 
 int catalog_open(Context* ctx) {
     if (ctx == NULL || ctx->db_path == NULL) return 0;
+    g_sql_ddl_error[0] = '\0';
     ctx->pager = pager_open(ctx->db_path);
     if (ctx->pager == NULL) return 0;
     catalog_clear(ctx);
@@ -707,8 +712,14 @@ int catalog_open(Context* ctx) {
     /* A file from before catalog V7 is brought forward as soon as it is
        opened, so a 64-bit cell is never written next to a V6 marker that an
        older build would trust. A fresh file has nothing to convert. */
-    if (g_catalog_version < 7 && (g_catalog_count > 0 || g_sequence_count > 0)) {
-        return catalog_upgrade_int64(ctx);
+    if (g_catalog_version < 7 && (g_catalog_count > 0 || g_sequence_count > 0) &&
+        !catalog_upgrade_int64(ctx)) {
+        /* The upgrade wrote nothing (see catalog_upgrade_int64), so the file
+           is still the V6 database it was; give the pager back. */
+        pager_close(ctx->pager);
+        ctx->pager = NULL;
+        catalog_clear(ctx);
+        return 0;
     }
     return 1;
 }
@@ -5374,19 +5385,37 @@ static int index_build_from_rows(Context* ctx, Table* table, int column, BTree* 
 }
 
 /* Brings a database written before catalog V7 forward (see the format notes
-   above catalog_read_cell): int and bool index keys switched to the 64-bit
-   encoding, so those indexes are rebuilt from the rows, then the catalog page
-   is rewritten as V7 (64-bit sequences). Rows are left alone; their 4-byte
-   int cells keep decoding. Returns 0 if an index cannot be rebuilt. */
+   above catalog_read_cell), all or nothing:
+
+   - Every index is rebuilt from the rows. Int and bool keys switched to the
+     64-bit encoding, and an index on a column of another type holds int keys
+     too whenever an int is stored there (an int literal in a float column),
+     so no index can be trusted as it is.
+   - The catalog page is rewritten as V7. It is bigger than the V6 one (int
+     DEFAULTs and sequences widen), so the V7 form is checked to fit the page
+     before anything is touched.
+   - The rebuild and the rewrite are one pager transaction, so a failure
+     anywhere rolls the file back to the V6 database it was.
+
+   Rows are left alone; their 4-byte int cells keep decoding. Returns 0 with
+   g_sql_ddl_error set when the database cannot be upgraded. */
 static int catalog_upgrade_int64(Context* ctx) {
-    for (int t = 0; t < g_catalog_count; t++) {
+    if (!catalog_fits()) {
+        snprintf(g_sql_ddl_error, sizeof(g_sql_ddl_error),
+                 "cannot upgrade %.60s to 64-bit ints (catalog V7): its catalog would "
+                 "need %ld of the %d bytes the catalog page holds; the file is unchanged",
+                 ctx->db_path, catalog_encoded_size(), PAGE_SIZE);
+        return 0;
+    }
+    int own_txn = !pager_in_transaction(ctx->pager);
+    if (own_txn && !pager_begin(ctx->pager)) return 0;
+    int ok = 1;
+    for (int t = 0; t < g_catalog_count && ok; t++) {
         Table* table = g_catalog[t];
-        for (int i = 0; i < table->index_count; i++) {
+        for (int i = 0; i < table->index_count && ok; i++) {
             TableIndex* idx = &table->indexes[i];
             int column = table_column_index(table, idx->column_name);
             if (column < 0) continue;
-            int type = table->columns[column].type;
-            if (type != VAL_INT && type != VAL_BOOL) continue;
 
             BTree* old = btree_open(ctx->pager, idx->root_page);
             if (old != NULL) {
@@ -5394,14 +5423,29 @@ static int catalog_upgrade_int64(Context* ctx) {
                 btree_destroy(old);
             }
             BTree* fresh = btree_create(ctx->pager);
-            if (fresh == NULL) return 0;
-            int ok = index_build_from_rows(ctx, table, column, fresh);
+            if (fresh == NULL) {
+                ok = 0;
+                break;
+            }
+            ok = index_build_from_rows(ctx, table, column, fresh);
             idx->root_page = btree_root_page(fresh);
             btree_destroy(fresh);
-            if (!ok) return 0;
         }
     }
-    return catalog_write_page(ctx);
+    if (ok) ok = catalog_write_page(ctx);
+    if (own_txn) {
+        if (ok) {
+            ok = pager_commit(ctx->pager); /* rolls back itself on failure */
+        } else {
+            pager_rollback(ctx->pager);
+        }
+    }
+    if (!ok && g_sql_ddl_error[0] == '\0') {
+        snprintf(g_sql_ddl_error, sizeof(g_sql_ddl_error),
+                 "could not upgrade %.120s to 64-bit ints (catalog V7); the file is unchanged",
+                 ctx->db_path);
+    }
+    return ok;
 }
 
 static int execute_create_index(Context* ctx, const char* index_name,
@@ -5889,9 +5933,14 @@ static int custom_open(DBDriver* driver, const char* connection_string) {
     }
     impl->ctx.db_path = connection_string != NULL ? connection_string : default_db_path();
     impl->ctx.pager = NULL;
+    g_sql_ddl_error[0] = '\0';
     if (!catalog_open(&impl->ctx)) {
-        snprintf(driver->error_message, sizeof(driver->error_message),
-                 "could not open catalog: %s", impl->ctx.db_path);
+        if (g_sql_ddl_error[0] != '\0') {
+            snprintf(driver->error_message, sizeof(driver->error_message), "%s", g_sql_ddl_error);
+        } else {
+            snprintf(driver->error_message, sizeof(driver->error_message),
+                     "could not open catalog: %s", impl->ctx.db_path);
+        }
         free(impl);
         return 0;
     }
